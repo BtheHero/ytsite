@@ -1,5 +1,8 @@
 package com.framestack.android.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,23 +13,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.framestack.android.R
 import com.framestack.android.data.VideoItem
 import com.framestack.android.data.VideoSource
 
@@ -35,7 +38,9 @@ fun MainScreen(viewModel: PlayerViewModel) {
     val state by viewModel.uiState.collectAsState()
     var isFullscreen by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var showSignInDialog by remember { mutableStateOf(false) }
     var queueQuery by remember { mutableStateOf("") }
+    var showDescription by remember { mutableStateOf(false) }
 
     val filteredQueue = remember(state.queue, queueQuery) {
         val q = queueQuery.trim().lowercase()
@@ -53,29 +58,82 @@ fun MainScreen(viewModel: PlayerViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "FrameStack",
-                        color = Color(0xFFF4F4F5),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(0xFF1F1F26), Color(0xFF0E0E12))
+                                    )
+                                )
+                                .border(1.dp, Color(0x44F59E0B), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                                contentDescription = "FrameStack Logo",
+                                tint = Color.Unspecified,
+                                modifier = Modifier.size(38.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "FrameStack",
+                            color = Color(0xFFF4F4F5),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
-                    Button(
-                        onClick = { showAddDialog = true },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFF59E0B),
-                            contentColor = Color(0xFF09090B)
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Add Source", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        OutlinedButton(
+                            onClick = { showSignInDialog = true },
+                            border = BorderStroke(
+                                1.dp,
+                                if (state.isSignedIn) Color(0x6634D399) else Color(0xFF27272A)
+                            ),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color(0xFF111114),
+                                contentColor = if (state.isSignedIn) Color(0xFF34D399) else Color(0xFFD4D4D8)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.Rounded.Login,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = if (state.isSignedIn) "Account" else "Sign In",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Button(
+                            onClick = { showAddDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFF59E0B),
+                                contentColor = Color(0xFF09090B)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Add", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -97,6 +155,7 @@ fun MainScreen(viewModel: PlayerViewModel) {
                 loopQueue = state.loopQueue,
                 loadingStream = state.loadingStream,
                 streamError = state.streamError,
+                isLoginRequired = state.isLoginRequired,
                 skipBannerText = state.skipBannerText,
                 onSelectQuality = viewModel::selectQuality,
                 onSetSpeed = viewModel::setPlaybackSpeed,
@@ -105,6 +164,10 @@ fun MainScreen(viewModel: PlayerViewModel) {
                 onToggleSponsorBlock = viewModel::toggleSponsorBlock,
                 onSkipBanner = viewModel::showSkipBanner,
                 onClearSkipBanner = viewModel::clearSkipBanner,
+                onRetry = {
+                    state.activeVideo?.let { viewModel.playVideo(it, forceRefresh = true) }
+                },
+                onOpenSignIn = { showSignInDialog = true },
                 onNext = viewModel::playNext,
                 onPrevious = viewModel::playPrevious,
                 isFullscreen = isFullscreen,
@@ -112,30 +175,94 @@ fun MainScreen(viewModel: PlayerViewModel) {
             )
 
             if (!isFullscreen) {
-                // Active Video Title & Metadata
+                // Expandable Now Playing Info Card
                 state.activeVideo?.let { vid ->
-                    Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp)) {
-                        Text(
-                            text = state.resolvedStreams?.title ?: vid.title,
-                            color = Color(0xFFF4F4F5),
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "${vid.author} · ${state.resolvedStreams?.sponsorSegments?.size ?: 0} sponsor markers",
-                            color = Color(0xFFA1A1AA),
-                            fontSize = 12.sp
-                        )
+                    val description = state.resolvedStreams?.description.orEmpty()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF111114))
+                            .border(1.dp, Color(0xFF1E1E24), RoundedCornerShape(14.dp))
+                            .clickable(enabled = description.isNotBlank()) { showDescription = !showDescription }
+                            .animateContentSize()
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = state.resolvedStreams?.title ?: vid.title,
+                                    color = Color(0xFFF4F4F5),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = if (showDescription) 4 else 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    lineHeight = 20.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = vid.author,
+                                        color = Color(0xFFA1A1AA),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val sbCount = state.resolvedStreams?.sponsorSegments?.size ?: 0
+                                    if (sbCount > 0) {
+                                        Surface(
+                                            color = Color(0x2234D399),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "$sbCount skips",
+                                                color = Color(0xFF34D399),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = FontFamily.Monospace,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (description.isNotBlank()) {
+                                Icon(
+                                    imageVector = if (showDescription) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                    contentDescription = null,
+                                    tint = Color(0xFF71717A),
+                                    modifier = Modifier.padding(start = 8.dp)
+                                )
+                            }
+                        }
+                        if (showDescription && description.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider(color = Color(0xFF27272A))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = description.take(400),
+                                color = Color(0xFFA1A1AA),
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp
+                            )
+                        }
                     }
                 }
 
                 // Channels & Playlists Strip
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 4.dp)
                 ) {
                     items(state.sources, key = { it.id }) { source ->
                         val active = source.id == state.activeSourceId
@@ -153,14 +280,21 @@ fun MainScreen(viewModel: PlayerViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 6.dp)
+                        .padding(top = 8.dp, bottom = 8.dp)
                 ) {
                     OutlinedTextField(
                         value = queueQuery,
                         onValueChange = { queueQuery = it },
-                        placeholder = { Text("Filter queue...", fontSize = 13.sp, color = Color(0xFF71717A)) },
+                        placeholder = { Text("Search ${state.queue.size} videos...", fontSize = 13.sp, color = Color(0xFF71717A)) },
                         leadingIcon = {
                             Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF71717A), modifier = Modifier.size(18.dp))
+                        },
+                        trailingIcon = {
+                            if (queueQuery.isNotEmpty()) {
+                                IconButton(onClick = { queueQuery = "" }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Rounded.Close, contentDescription = "Clear", tint = Color(0xFF71717A), modifier = Modifier.size(16.dp))
+                                }
+                            }
                         },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
@@ -171,19 +305,30 @@ fun MainScreen(viewModel: PlayerViewModel) {
                             focusedContainerColor = Color(0xFF111114),
                             unfocusedContainerColor = Color(0xFF111114)
                         ),
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     )
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    IconButton(
+                    Surface(
                         onClick = {
                             state.sources.firstOrNull { it.id == state.activeSourceId }
-                                ?.let { viewModel.selectSource(it) }
-                        }
+                                ?.let { viewModel.selectSource(it, forceRefresh = true) }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF111114),
+                        border = BorderStroke(1.dp, Color(0xFF27272A)),
+                        modifier = Modifier.size(50.dp)
                     ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh source", tint = Color(0xFFA1A1AA))
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Rounded.Refresh,
+                                contentDescription = "Refresh source",
+                                tint = Color(0xFFD4D4D8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
 
@@ -210,12 +355,13 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                 Button(
                                     onClick = {
                                         state.sources.firstOrNull { it.id == state.activeSourceId }
-                                            ?.let { viewModel.selectSource(it) }
+                                            ?.let { viewModel.selectSource(it, forceRefresh = true) }
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFFF59E0B),
                                         contentColor = Color(0xFF09090B)
-                                    )
+                                    ),
+                                    shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text("Retry", fontWeight = FontWeight.SemiBold)
                                 }
@@ -231,7 +377,7 @@ fun MainScreen(viewModel: PlayerViewModel) {
                         }
                         else -> {
                             LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                                 contentPadding = PaddingValues(bottom = 24.dp)
                             ) {
                                 itemsIndexed(filteredQueue, key = { _, item -> item.videoId }) { index, video ->
@@ -265,6 +411,21 @@ fun MainScreen(viewModel: PlayerViewModel) {
             }
         )
     }
+
+    if (showSignInDialog) {
+        YouTubeSignInDialog(
+            isSignedIn = state.isSignedIn,
+            onSignedIn = { cookies ->
+                showSignInDialog = false
+                viewModel.onYouTubeCookiesSaved(cookies)
+            },
+            onSignOut = {
+                viewModel.signOutYouTube()
+                showSignInDialog = false
+            },
+            onDismiss = { showSignInDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -274,16 +435,15 @@ private fun SourceChip(
     onSelect: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val bg by animateColorAsState(if (active) Color(0x26F59E0B) else Color(0xFF111114))
+    val border by animateColorAsState(if (active) Color(0xFFF59E0B) else Color(0xFF27272A))
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (active) Color(0x22F59E0B) else Color(0xFF111114))
-            .border(
-                width = 1.dp,
-                color = if (active) Color(0xFFF59E0B) else Color(0xFF27272A),
-                shape = RoundedCornerShape(10.dp)
-            )
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(width = 1.dp, color = border, shape = RoundedCornerShape(12.dp))
             .clickable(onClick = onSelect)
             .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
     ) {
@@ -292,16 +452,16 @@ private fun SourceChip(
                 text = source.title,
                 color = if (active) Color(0xFFFDE68A) else Color(0xFFE4E4E7),
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                 maxLines = 1
             )
             Text(
                 text = "${source.type.replaceFirstChar { it.uppercase() }} · ${source.category}",
-                color = Color(0xFF71717A),
+                color = if (active) Color(0xFFF59E0B) else Color(0xFF71717A),
                 fontSize = 11.sp
             )
         }
-        Spacer(modifier = Modifier.width(6.dp))
+        Spacer(modifier = Modifier.width(4.dp))
         IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
             Icon(
                 Icons.Rounded.DeleteOutline,
@@ -320,54 +480,77 @@ private fun QueueRow(
     active: Boolean,
     onClick: () -> Unit
 ) {
+    val bg by animateColorAsState(if (active) Color(0x22F59E0B) else Color(0xFF111114))
+    val border by animateColorAsState(if (active) Color(0x99F59E0B) else Color(0xFF1E1E24))
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (active) Color(0x1DF59E0B) else Color(0xFF111114))
-            .border(
-                width = 1.dp,
-                color = if (active) Color(0x55F59E0B) else Color(0xFF1E1E24),
-                shape = RoundedCornerShape(10.dp)
-            )
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(width = 1.dp, color = border, shape = RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
-            .padding(8.dp)
+            .padding(10.dp)
     ) {
-        Text(
-            text = "%02d".format(index),
-            color = if (active) Color(0xFFF59E0B) else Color(0xFF71717A),
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.width(24.dp)
-        )
-
-        AsyncImage(
-            model = video.thumbnailUrl,
-            contentDescription = video.title,
-            contentScale = ContentScale.Crop,
+        Box(
             modifier = Modifier
-                .width(96.dp)
+                .width(114.dp)
                 .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(RoundedCornerShape(9.dp))
                 .background(Color(0xFF18181B))
-        )
+        ) {
+            AsyncImage(
+                model = video.thumbnailUrl,
+                contentDescription = video.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            if (active) {
+                Text(
+                    text = "PLAYING",
+                    color = Color(0xFF09090B),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(5.dp)
+                        .background(Color(0xFFF59E0B), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                )
+            }
+            if (video.durationSeconds > 0L) {
+                Text(
+                    text = formatMillis(video.durationSeconds * 1000L),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(5.dp)
+                        .background(Color(0xCC09090B), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                )
+            }
+        }
 
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = video.title,
-                color = if (active) Color(0xFFFEF3C7) else Color(0xFFE4E4E7),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
+                color = if (active) Color(0xFFFEF3C7) else Color(0xFFF4F4F5),
+                fontSize = 14.sp,
+                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 18.sp
             )
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(5.dp))
             Text(
-                text = "${video.author} · ${formatMillis(video.durationSeconds * 1000L)}",
-                color = Color(0xFF71717A),
+                text = "#%02d · %s".format(index, video.author),
+                color = if (active) Color(0xFFFBBF24) else Color(0xFF71717A),
                 fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -427,6 +610,7 @@ private fun AddSourceDialog(
                     containerColor = Color(0xFFF59E0B),
                     contentColor = Color(0xFF09090B)
                 ),
+                shape = RoundedCornerShape(10.dp),
                 onClick = {
                     loading = true
                     error = null
@@ -436,7 +620,7 @@ private fun AddSourceDialog(
                     }
                 }
             ) {
-                Text(if (loading) "Loading..." else "Add Source")
+                Text(if (loading) "Loading..." else "Add Source", fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {

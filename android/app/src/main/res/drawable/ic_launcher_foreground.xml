@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Back stacked cinema frame -->
+    <path
+        android:fillColor="#27272A"
+        android:strokeColor="#3F3F46"
+        android:strokeWidth="1.2"
+        android:pathData="M34,27h40a7,7 0,0 1,7 7v30a7,7 0,0 1,-7 7h-40a7,7 0,0 1,-7 -7v-30a7,7 0,0 1,7 -7z" />
+
+    <!-- Middle depth frame -->
+    <path
+        android:fillColor="#3F3F46"
+        android:pathData="M31,32h46a7,7 0,0 1,7 7v31a7,7 0,0 1,-7 7h-46a7,7 0,0 1,-7 -7v-31a7,7 0,0 1,7 -7z" />
+
+    <!-- Primary amber cinema frame -->
+    <path android:pathData="M28,37h52a8,8 0,0 1,8 8v30a8,8 0,0 1,-8 8h-52a8,8 0,0 1,-8 -8v-30a8,8 0,0 1,8 -8z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="84"
+                android:endY="81"
+                android:startX="24"
+                android:startY="37"
+                android:type="linear">
+                <item android:color="#FBBF24" android:offset="0.0" />
+                <item android:color="#F59E0B" android:offset="0.55" />
+                <item android:color="#D97706" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Precision dark play prism -->
+    <path
+        android:fillColor="#09090B"
+        android:pathData="M48,50.5c0,-1.4 1.5,-2.2 2.7,-1.5l14.8,9.5c1.1,0.7 1.1,2.3 0,3l-14.8,9.5c-1.2,0.8 -2.7,-0.1 -2.7,-1.5z" />
+</vector>

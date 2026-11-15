@@ -6,16 +6,19 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.framestack.android.data.LoginRequiredException
 import com.framestack.android.data.QualityOption
 import com.framestack.android.data.ResolvedStreams
 import com.framestack.android.data.VideoItem
 import com.framestack.android.data.VideoSource
 import com.framestack.android.data.YouTubeRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 
 data class PlayerUiState(
     val sources: List<VideoSource> = emptyList(),
@@ -28,6 +31,8 @@ data class PlayerUiState(
     val loadingStream: Boolean = false,
     val queueError: String? = null,
     val streamError: String? = null,
+    val isLoginRequired: Boolean = false,
+    val isSignedIn: Boolean = false,
     val shuffle: Boolean = false,
     val loopQueue: Boolean = true,
     val sponsorBlockEnabled: Boolean = true,
@@ -45,8 +50,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             application.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
     }
 
-    private val _uiState = MutableStateFlow(PlayerUiState())
+    private val _uiState = MutableStateFlow(
+        PlayerUiState(isSignedIn = repository.authManager.isSignedIn())
+    )
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+
+    private var feedJob: Job? = null
+    private var streamJob: Job? = null
+    private var prefetchJob: Job? = null
 
     init {
         val initialSources = repository.loadSources()
@@ -54,7 +65,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         initialSources.firstOrNull()?.let { selectSource(it) }
     }
 
-    fun selectSource(source: VideoSource, autoPlay: Boolean = !isTvDevice) {
+    fun selectSource(
+        source: VideoSource,
+        autoPlay: Boolean = !isTvDevice,
+        forceRefresh: Boolean = false
+    ) {
+        feedJob?.cancel()
         _uiState.update {
             it.copy(
                 activeSourceId = source.id,
@@ -63,12 +79,33 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 queue = emptyList(),
                 activeVideo = if (autoPlay) null else it.activeVideo,
                 resolvedStreams = if (autoPlay) null else it.resolvedStreams,
-                selectedQuality = if (autoPlay) null else it.selectedQuality
+                selectedQuality = if (autoPlay) null else it.selectedQuality,
+                isLoginRequired = false
             )
         }
-        viewModelScope.launch {
-            repository.fetchSourceVideos(source)
+        feedJob = viewModelScope.launch {
+            var startedPreviewPlay = false
+            repository.fetchSourceVideos(
+                source = source,
+                forceRefresh = forceRefresh,
+                onFastPreview = { previewItems ->
+                    if (_uiState.value.activeSourceId == source.id && previewItems.isNotEmpty()) {
+                        _uiState.update {
+                            it.copy(
+                                queue = previewItems,
+                                loadingQueue = false,
+                                queueError = null
+                            )
+                        }
+                        if (autoPlay && !startedPreviewPlay && _uiState.value.activeVideo == null) {
+                            startedPreviewPlay = true
+                            previewItems.firstOrNull()?.let { playVideo(it) }
+                        }
+                    }
+                }
+            )
                 .onSuccess { videos ->
+                    if (_uiState.value.activeSourceId != source.id) return@onSuccess
                     _uiState.update {
                         it.copy(
                             queue = videos,
@@ -76,35 +113,40 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             queueError = if (videos.isEmpty()) "No videos found in this feed." else null
                         )
                     }
-                    if (autoPlay) {
+                    if (autoPlay && !startedPreviewPlay) {
                         videos.firstOrNull()?.let { playVideo(it) }
                     }
                 }
                 .onFailure { err ->
+                    if (_uiState.value.activeSourceId != source.id) return@onFailure
                     _uiState.update {
                         it.copy(
                             loadingQueue = false,
-                            queueError = err.message ?: "Failed to load channel/playlist."
+                            queueError = if (it.queue.isEmpty()) err.message ?: "Failed to load channel/playlist." else null
                         )
                     }
                 }
         }
     }
 
-    fun playVideo(video: VideoItem) {
+    fun playVideo(video: VideoItem, forceRefresh: Boolean = false) {
+        streamJob?.cancel()
+        prefetchJob?.cancel()
         _uiState.update {
             it.copy(
                 activeVideo = video,
                 loadingStream = true,
                 streamError = null,
+                isLoginRequired = false,
                 resolvedStreams = null,
                 selectedQuality = null,
                 skipBannerText = null
             )
         }
-        viewModelScope.launch {
-            repository.resolveVideoStreams(video)
+        streamJob = viewModelScope.launch {
+            repository.resolveVideoStreams(video, forceRefresh = forceRefresh)
                 .onSuccess { resolved ->
+                    if (_uiState.value.activeVideo?.videoId != video.videoId) return@onSuccess
                     val preferredQuality =
                         resolved.qualities.firstOrNull { it.height <= 1080 }
                             ?: resolved.qualities.firstOrNull()
@@ -112,18 +154,68 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         it.copy(
                             resolvedStreams = resolved,
                             selectedQuality = preferredQuality,
-                            loadingStream = false
+                            loadingStream = false,
+                            isLoginRequired = false,
+                            streamError = null
                         )
                     }
+                    prefetchNextInQueue(video)
                 }
                 .onFailure { err ->
+                    if (_uiState.value.activeVideo?.videoId != video.videoId) return@onFailure
+                    val loginReq = err is LoginRequiredException ||
+                        err is SignInConfirmNotBotException ||
+                        (err.message?.contains("LOGIN_REQUIRED", ignoreCase = true) == true) ||
+                        (err.message?.contains("not a bot", ignoreCase = true) == true)
                     _uiState.update {
                         it.copy(
                             loadingStream = false,
+                            isLoginRequired = loginReq,
                             streamError = err.message ?: "Could not resolve video stream."
                         )
                     }
                 }
+        }
+    }
+
+    fun onYouTubeCookiesSaved(rawCookies: String) {
+        repository.authManager.saveCookies(rawCookies)
+        repository.clearStreamCache()
+        _uiState.update {
+            it.copy(
+                isSignedIn = repository.authManager.isSignedIn(),
+                isLoginRequired = false,
+                streamError = null
+            )
+        }
+        val activeVid = _uiState.value.activeVideo
+        if (activeVid != null) {
+            playVideo(activeVid, forceRefresh = true)
+        } else {
+            _uiState.value.sources.firstOrNull { it.id == _uiState.value.activeSourceId }
+                ?.let { selectSource(it, forceRefresh = true) }
+        }
+    }
+
+    fun signOutYouTube() {
+        repository.authManager.signOut()
+        repository.clearStreamCache()
+        _uiState.update { it.copy(isSignedIn = false) }
+    }
+
+    private fun prefetchNextInQueue(current: VideoItem) {
+        val queue = _uiState.value.queue
+        if (queue.size <= 1) return
+        val idx = queue.indexOfFirst { it.videoId == current.videoId }
+        val nextVideo = when {
+            idx in 0 until queue.lastIndex -> queue[idx + 1]
+            _uiState.value.loopQueue -> queue.firstOrNull()
+            else -> null
+        } ?: return
+        if (nextVideo.videoId == current.videoId) return
+
+        prefetchJob = viewModelScope.launch {
+            repository.prefetchVideoStreams(nextVideo)
         }
     }
 

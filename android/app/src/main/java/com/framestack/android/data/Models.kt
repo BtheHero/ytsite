@@ -32,7 +32,9 @@ data class QualityOption(
     val height: Int,
     val videoUrl: String,
     val audioUrl: String?, // null when muxed stream includes audio
-    val isMuxed: Boolean
+    val isMuxed: Boolean,
+    val userAgent: String? = null,
+    val isHls: Boolean = false
 )
 
 data class ResolvedStreams(
@@ -50,3 +52,8 @@ data class SponsorSegment(
     val category: String = "sponsor",
     val segment: List<Double> = emptyList()
 )
+
+class LoginRequiredException(
+    message: String,
+    cause: Throwable? = null
+) : Exception(message, cause)

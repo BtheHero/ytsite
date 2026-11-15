@@ -3,20 +3,61 @@ package com.framestack.android.data
 import android.content.Context
 import android.util.Xml
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerManager
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.xmlpull.v1.XmlPullParser
 import java.io.StringReader
+import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 
 class YouTubeRepository(private val context: Context) {
+
+    val authManager = YouTubeAuthManager(context)
+
+    private data class CachedFeed(val items: List<VideoItem>, val timestampMs: Long)
+    private data class CachedStreams(val streams: ResolvedStreams, val timestampMs: Long)
+
+    private data class InnertubeClient(
+        val clientName: String,
+        val clientVersion: String,
+        val clientIdHeader: String,
+        val userAgent: String,
+        val deviceMake: String? = null,
+        val deviceModel: String? = null,
+        val osName: String? = null,
+        val osVersion: String? = null,
+        val androidSdkVersion: Int? = null,
+        val needsSignatureTimestamp: Boolean = false,
+        val sendCookies: Boolean = false
+    )
+
+    private val feedCache = ConcurrentHashMap<String, CachedFeed>()
+    private val streamCache = ConcurrentHashMap<String, CachedStreams>()
+
+    private val feedCacheTtlMs = 5L * 60L * 1000L
+    private val streamCacheTtlMs = 20L * 60L * 1000L
+
+    @Volatile
+    private var cachedVisitorData: String? = null
+    @Volatile
+    private var visitorDataFetchedAtMs: Long = 0L
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -24,6 +65,12 @@ class YouTubeRepository(private val context: Context) {
     }
 
     private val prefs = context.getSharedPreferences("framestack_prefs", Context.MODE_PRIVATE)
+
+    fun clearStreamCache() {
+        streamCache.clear()
+        cachedVisitorData = null
+        visitorDataFetchedAtMs = 0L
+    }
 
     fun loadSources(): List<VideoSource> {
         val saved = prefs.getString("sources_json", null)
@@ -139,46 +186,27 @@ class YouTubeRepository(private val context: Context) {
         }
     }
 
-    suspend fun fetchSourceVideos(source: VideoSource): Result<List<VideoItem>> =
+    suspend fun fetchSourceVideos(
+        source: VideoSource,
+        forceRefresh: Boolean = false,
+        onFastPreview: ((List<VideoItem>) -> Unit)? = null
+    ): Result<List<VideoItem>> =
         withContext(Dispatchers.IO) {
             runCatching {
+                val now = System.currentTimeMillis()
+                if (!forceRefresh) {
+                    val cached = feedCache[source.id]
+                    if (cached != null && now - cached.timestampMs < feedCacheTtlMs && cached.items.isNotEmpty()) {
+                        return@runCatching cached.items
+                    }
+                }
+
                 val channelId = source.channelId
                     ?: source.playlistId?.takeIf { it.startsWith("UU") }?.let { "UC${it.drop(2)}" }
 
                 val playlistId = source.playlistId
                     ?: channelId?.takeIf { it.startsWith("UC") }?.let { "UU${it.drop(2)}" }
 
-                // 1. Try NewPipeExtractor PlaylistInfo first (supports deep playlists + durations)
-                if (!playlistId.isNullOrBlank()) {
-                    val targetUrl = "https://www.youtube.com/playlist?list=$playlistId"
-                    val npItems = runCatching {
-                        PlaylistInfo.getInfo(ServiceList.YouTube, targetUrl)
-                            .relatedItems
-                            .filterIsInstance<StreamInfoItem>()
-                            .mapNotNull { item ->
-                                val videoUrl = item.url ?: return@mapNotNull null
-                                val videoId = extractVideoId(videoUrl) ?: return@mapNotNull null
-                                val thumb = item.thumbnails
-                                    .maxByOrNull { it.width }
-                                    ?.url
-                                    ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
-                                VideoItem(
-                                    videoId = videoId,
-                                    title = item.name ?: "Untitled Video",
-                                    author = item.uploaderName ?: source.title,
-                                    durationSeconds = item.duration,
-                                    thumbnailUrl = thumb,
-                                    videoUrl = videoUrl
-                                )
-                            }
-                    }.getOrNull()
-
-                    if (!npItems.isNullOrEmpty()) {
-                        return@runCatching npItems
-                    }
-                }
-
-                // 2. Reliable YouTube Atom XML feed fallback (works even when UU playlists or Innertube fail)
                 val rssUrl = when {
                     source.type == "playlist" && !source.playlistId.isNullOrBlank() && !source.playlistId.startsWith("UU") ->
                         "https://www.youtube.com/feeds/videos.xml?playlist_id=${source.playlistId}"
@@ -189,84 +217,506 @@ class YouTubeRepository(private val context: Context) {
                     else -> null
                 }
 
-                if (rssUrl != null) {
-                    val rssItems = fetchAtomVideos(rssUrl, source.title)
-                    if (rssItems.isNotEmpty()) {
-                        return@runCatching rssItems
+                val items = coroutineScope {
+                    val rssDeferred = async {
+                        if (rssUrl != null) fetchAtomVideos(rssUrl, source.title) else emptyList()
+                    }
+                    val npDeferred = async {
+                        if (!playlistId.isNullOrBlank()) {
+                            val targetUrl = "https://www.youtube.com/playlist?list=$playlistId"
+                            runCatching {
+                                PlaylistInfo.getInfo(ServiceList.YouTube, targetUrl)
+                                    .relatedItems
+                                    .filterIsInstance<StreamInfoItem>()
+                                    .mapNotNull { item ->
+                                        val videoUrl = item.url ?: return@mapNotNull null
+                                        val videoId = extractVideoId(videoUrl) ?: return@mapNotNull null
+                                        val thumb = item.thumbnails
+                                            .maxByOrNull { it.width }
+                                            ?.url
+                                            ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+                                        VideoItem(
+                                            videoId = videoId,
+                                            title = item.name ?: "Untitled Video",
+                                            author = item.uploaderName ?: source.title,
+                                            durationSeconds = item.duration,
+                                            thumbnailUrl = thumb,
+                                            videoUrl = videoUrl
+                                        )
+                                    }
+                            }.getOrNull().orEmpty()
+                        } else {
+                            emptyList()
+                        }
+                    }
+
+                    // Emit fast Atom XML preview immediately if PlaylistInfo is still resolving
+                    val rssItems = rssDeferred.await()
+                    if (rssItems.isNotEmpty() && !npDeferred.isCompleted) {
+                        onFastPreview?.invoke(rssItems)
+                    }
+
+                    val npItems = npDeferred.await()
+                    when {
+                        npItems.isNotEmpty() -> npItems
+                        rssItems.isNotEmpty() -> rssItems
+                        else -> emptyList()
                     }
                 }
 
-                emptyList()
+                if (items.isNotEmpty()) {
+                    feedCache[source.id] = CachedFeed(items, System.currentTimeMillis())
+                }
+                items
             }
         }
 
-    suspend fun resolveVideoStreams(video: VideoItem): Result<ResolvedStreams> =
+    suspend fun resolveVideoStreams(
+        video: VideoItem,
+        forceRefresh: Boolean = false
+    ): Result<ResolvedStreams> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val info = StreamInfo.getInfo(ServiceList.YouTube, video.videoUrl)
-
-                val bestAudio = info.audioStreams
-                    .filter { it.isUrl && !it.content.isNullOrBlank() }
-                    .maxByOrNull { it.averageBitrate }
-                    ?.content
-
-                val adaptiveOptions = if (!bestAudio.isNullOrBlank()) {
-                    info.videoOnlyStreams
-                        .filter { it.isUrl && !it.content.isNullOrBlank() && it.height > 0 }
-                        .groupBy { it.height }
-                        .mapNotNull { (height, streams) ->
-                            val picked = streams.firstOrNull {
-                                it.format?.name?.contains("MPEG_4", ignoreCase = true) == true
-                            } ?: streams.firstOrNull()
-                            picked?.let {
-                                QualityOption(
-                                    label = "${height}p",
-                                    height = height,
-                                    videoUrl = it.content,
-                                    audioUrl = bestAudio,
-                                    isMuxed = false
-                                )
-                            }
-                        }
-                } else {
-                    emptyList()
+                val now = System.currentTimeMillis()
+                if (!forceRefresh) {
+                    val cached = streamCache[video.videoId]
+                    if (cached != null && now - cached.timestampMs < streamCacheTtlMs) {
+                        return@runCatching cached.streams
+                    }
                 }
 
-                val muxedOptions = info.videoStreams
-                    .filter { it.isUrl && !it.content.isNullOrBlank() && it.height > 0 }
-                    .groupBy { it.height }
-                    .mapNotNull { (height, streams) ->
-                        streams.firstOrNull()?.let {
-                            QualityOption(
-                                label = "${height}p",
-                                height = height,
-                                videoUrl = it.content,
-                                audioUrl = null,
-                                isMuxed = true
-                            )
+                val resolved = coroutineScope {
+                    val sponsorDeferred = async { fetchSponsorSegments(video.videoId) }
+                    val signedIn = authManager.isSignedIn()
+                    val visitorData = getVisitorData()
+
+                    var lastError: Throwable? = null
+                    var sawLoginRequired = false
+
+                    fun noteError(err: Throwable) {
+                        lastError = err
+                        if (isLoginRequiredError(err)) {
+                            sawLoginRequired = true
                         }
                     }
 
-                val combinedQualities = (adaptiveOptions + muxedOptions)
-                    .distinctBy { it.height }
-                    .sortedByDescending { it.height }
+                    val attempts: List<() -> ResolvedStreams?> = if (signedIn) {
+                        listOf(
+                            { resolveViaInnertube(video, CLIENT_TVHTML5_AUTH, visitorData, emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_WEB_AUTH, visitorData, emptyList()) },
+                            { resolveViaNewPipe(video) },
+                            { resolveViaInnertube(video, CLIENT_ANDROID_VR, visitorData, emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_IOS, visitorData, emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_ANDROID, visitorData, emptyList()) }
+                        )
+                    } else {
+                        listOf(
+                            { resolveViaInnertube(video, CLIENT_ANDROID_VR, visitorData, emptyList()) },
+                            { resolveViaNewPipe(video) },
+                            { resolveViaInnertube(video, CLIENT_IOS, visitorData, emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_ANDROID, visitorData, emptyList()) }
+                        )
+                    }
 
-                require(combinedQualities.isNotEmpty()) {
-                    "No playable video streams returned by NewPipeExtractor."
+                    var baseResult: ResolvedStreams? = null
+                    for (attempt in attempts) {
+                        try {
+                            val candidate = attempt()
+                            if (candidate != null && candidate.qualities.isNotEmpty()) {
+                                baseResult = candidate
+                                break
+                            }
+                        } catch (t: Throwable) {
+                            noteError(t)
+                        }
+                    }
+
+                    if (baseResult == null) {
+                        if (sawLoginRequired) {
+                            val msg = if (signedIn) {
+                                "Your YouTube session may have expired or this video requires re-verification. Please sign in again."
+                            } else {
+                                "YouTube requested sign-in verification on this network (Sign in to confirm you're not a bot)."
+                            }
+                            throw LoginRequiredException(msg, lastError)
+                        }
+                        throw (lastError ?: IllegalStateException("No playable streams found for this video."))
+                    }
+
+                    baseResult.copy(sponsorSegments = sponsorDeferred.await())
                 }
 
-                val segments = fetchSponsorSegments(video.videoId)
+                streamCache[video.videoId] = CachedStreams(resolved, System.currentTimeMillis())
+                resolved
+            }
+        }
 
-                ResolvedStreams(
-                    title = info.name ?: video.title,
-                    author = info.uploaderName ?: video.author,
-                    description = info.description?.content() ?: "",
-                    durationSeconds = info.duration,
-                    qualities = combinedQualities,
-                    sponsorSegments = segments
+    suspend fun prefetchVideoStreams(video: VideoItem) {
+        val cached = streamCache[video.videoId]
+        if (cached != null && System.currentTimeMillis() - cached.timestampMs < streamCacheTtlMs) {
+            return
+        }
+        resolveVideoStreams(video)
+    }
+
+    private fun resolveViaNewPipe(video: VideoItem): ResolvedStreams {
+        val info = StreamInfo.getInfo(ServiceList.YouTube, video.videoUrl)
+
+        val bestAudio = info.audioStreams
+            .filter { it.isUrl && !it.content.isNullOrBlank() }
+            .maxByOrNull { it.averageBitrate }
+            ?.content
+
+        val adaptiveOptions = if (!bestAudio.isNullOrBlank()) {
+            info.videoOnlyStreams
+                .filter { it.isUrl && !it.content.isNullOrBlank() && it.height > 0 }
+                .groupBy { it.height }
+                .mapNotNull { (height, streams) ->
+                    val picked = streams.firstOrNull {
+                        it.format?.name?.contains("MPEG_4", ignoreCase = true) == true
+                    } ?: streams.firstOrNull()
+                    picked?.let {
+                        QualityOption(
+                            label = "${height}p",
+                            height = height,
+                            videoUrl = it.content,
+                            audioUrl = bestAudio,
+                            isMuxed = false
+                        )
+                    }
+                }
+        } else {
+            emptyList()
+        }
+
+        val muxedOptions = info.videoStreams
+            .filter { it.isUrl && !it.content.isNullOrBlank() && it.height > 0 }
+            .groupBy { it.height }
+            .mapNotNull { (height, streams) ->
+                streams.firstOrNull()?.let {
+                    QualityOption(
+                        label = "${height}p",
+                        height = height,
+                        videoUrl = it.content,
+                        audioUrl = null,
+                        isMuxed = true
+                    )
+                }
+            }
+
+        val combinedQualities = (adaptiveOptions + muxedOptions)
+            .distinctBy { it.height }
+            .sortedByDescending { it.height }
+
+        require(combinedQualities.isNotEmpty()) {
+            "No playable video streams returned by NewPipeExtractor."
+        }
+
+        return ResolvedStreams(
+            title = info.name ?: video.title,
+            author = info.uploaderName ?: video.author,
+            description = info.description?.content() ?: "",
+            durationSeconds = info.duration,
+            qualities = combinedQualities,
+            sponsorSegments = emptyList()
+        )
+    }
+
+    private fun resolveViaInnertube(
+        video: VideoItem,
+        client: InnertubeClient,
+        visitorData: String?,
+        sponsorSegments: List<SponsorSegment>
+    ): ResolvedStreams {
+        val clientJson = JSONObject().apply {
+            put("clientName", client.clientName)
+            put("clientVersion", client.clientVersion)
+            put("hl", "en")
+            put("gl", "US")
+            client.deviceMake?.let { put("deviceMake", it) }
+            client.deviceModel?.let { put("deviceModel", it) }
+            client.osName?.let { put("osName", it) }
+            client.osVersion?.let { put("osVersion", it) }
+            client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+            if (!visitorData.isNullOrBlank()) {
+                put("visitorData", visitorData)
+            }
+        }
+
+        val contextJson = JSONObject().apply {
+            put("client", clientJson)
+        }
+
+        val payloadJson = JSONObject().apply {
+            put("videoId", video.videoId)
+            put("context", contextJson)
+            put("contentCheckOk", true)
+            put("racyCheckOk", true)
+            if (client.needsSignatureTimestamp) {
+                val sts = runCatching {
+                    YoutubeJavaScriptPlayerManager.getSignatureTimestamp(video.videoId)
+                }.getOrNull()
+                if (sts != null && sts > 0) {
+                    put(
+                        "playbackContext",
+                        JSONObject().put(
+                            "contentPlaybackContext",
+                            JSONObject().put("signatureTimestamp", sts)
+                        )
+                    )
+                }
+            }
+        }
+
+        val reqBuilder = Request.Builder()
+            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", client.userAgent)
+            .header("X-YouTube-Client-Name", client.clientIdHeader)
+            .header("X-YouTube-Client-Version", client.clientVersion)
+
+        if (client.sendCookies && authManager.isSignedIn()) {
+            authManager.buildAuthHeaders().forEach { (k, v) ->
+                reqBuilder.header(k, v)
+            }
+        }
+
+        val body = payloadJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+        reqBuilder.post(body)
+
+        val responseBody = DownloaderImpl.getInstance().rawClient.newCall(reqBuilder.build()).execute().use { res ->
+            if (!res.isSuccessful) {
+                throw IllegalStateException("${client.clientName} HTTP ${res.code}")
+            }
+            res.body?.string() ?: throw IllegalStateException("${client.clientName} empty body")
+        }
+
+        val root = JSONObject(responseBody)
+        val playability = root.optJSONObject("playabilityStatus")
+        val status = playability?.optString("status", "") ?: ""
+        val reason = playability?.optString("reason", "") ?: ""
+
+        if (status != "OK") {
+            if (status == "LOGIN_REQUIRED" ||
+                reason.contains("not a bot", ignoreCase = true) ||
+                reason.contains("Sign in", ignoreCase = true) ||
+                reason.contains("confirm your age", ignoreCase = true)
+            ) {
+                throw LoginRequiredException("${client.clientName} $status: $reason")
+            }
+            throw IllegalStateException("${client.clientName} $status: $reason")
+        }
+
+        val streamingData = root.optJSONObject("streamingData")
+            ?: throw IllegalStateException("${client.clientName} missing streamingData")
+
+        val videoDetails = root.optJSONObject("videoDetails")
+        val title = videoDetails?.optString("title")?.takeIf { it.isNotBlank() } ?: video.title
+        val author = videoDetails?.optString("author")?.takeIf { it.isNotBlank() } ?: video.author
+        val description = videoDetails?.optString("shortDescription") ?: ""
+        val durationSeconds = videoDetails?.optString("lengthSeconds")?.toLongOrNull() ?: video.durationSeconds
+
+        val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") ?: JSONArray()
+        val muxedFormats = streamingData.optJSONArray("formats") ?: JSONArray()
+
+        val audioStreams = mutableListOf<Pair<Int, String>>()
+        val videoOnlyByHeight = LinkedHashMap<Int, MutableList<Pair<String, String>>>()
+
+        for (i in 0 until adaptiveFormats.length()) {
+            val fmt = adaptiveFormats.optJSONObject(i) ?: continue
+            val mime = fmt.optString("mimeType", "")
+            val resolvedUrl = resolveFormatUrl(video.videoId, fmt, client.needsSignatureTimestamp) ?: continue
+
+            if (mime.startsWith("audio/", ignoreCase = true)) {
+                val bitrate = fmt.optInt("averageBitrate", fmt.optInt("bitrate", 0))
+                audioStreams.add(bitrate to resolvedUrl)
+            } else if (mime.startsWith("video/", ignoreCase = true)) {
+                val height = fmt.optInt("height", 0)
+                if (height > 0) {
+                    videoOnlyByHeight.getOrPut(height) { mutableListOf() }.add(mime to resolvedUrl)
+                }
+            }
+        }
+
+        val bestAudioUrl = audioStreams.maxByOrNull { it.first }?.second
+
+        val adaptiveQualities = if (!bestAudioUrl.isNullOrBlank()) {
+            videoOnlyByHeight.mapNotNull { (height, candidates) ->
+                val picked = candidates.firstOrNull { (mime, _) ->
+                    mime.contains("mp4", ignoreCase = true) && mime.contains("avc1", ignoreCase = true)
+                } ?: candidates.firstOrNull { (mime, _) ->
+                    mime.contains("mp4", ignoreCase = true)
+                } ?: candidates.firstOrNull()
+
+                picked?.let { (_, streamUrl) ->
+                    QualityOption(
+                        label = "${height}p",
+                        height = height,
+                        videoUrl = streamUrl,
+                        audioUrl = bestAudioUrl,
+                        isMuxed = false,
+                        userAgent = client.userAgent
+                    )
+                }
+            }
+        } else {
+            emptyList()
+        }
+
+        val muxedQualities = (0 until muxedFormats.length()).mapNotNull { i ->
+            val fmt = muxedFormats.optJSONObject(i) ?: return@mapNotNull null
+            val height = fmt.optInt("height", 0)
+            if (height <= 0) return@mapNotNull null
+            val resolvedUrl = resolveFormatUrl(video.videoId, fmt, client.needsSignatureTimestamp)
+                ?: return@mapNotNull null
+            QualityOption(
+                label = "${height}p",
+                height = height,
+                videoUrl = resolvedUrl,
+                audioUrl = null,
+                isMuxed = true,
+                userAgent = client.userAgent
+            )
+        }
+
+        var combinedQualities = (adaptiveQualities + muxedQualities)
+            .distinctBy { it.height }
+            .sortedByDescending { it.height }
+
+        if (combinedQualities.isEmpty()) {
+            val hlsManifestUrl = streamingData.optString("hlsManifestUrl", "")
+            if (hlsManifestUrl.isNotBlank()) {
+                combinedQualities = listOf(
+                    QualityOption(
+                        label = "Auto (HLS)",
+                        height = 1080,
+                        videoUrl = hlsManifestUrl,
+                        audioUrl = null,
+                        isMuxed = true,
+                        userAgent = client.userAgent,
+                        isHls = true
+                    )
                 )
             }
         }
+
+        require(combinedQualities.isNotEmpty()) {
+            "${client.clientName} returned no playable stream URLs."
+        }
+
+        return ResolvedStreams(
+            title = title,
+            author = author,
+            description = description,
+            durationSeconds = durationSeconds,
+            qualities = combinedQualities,
+            sponsorSegments = sponsorSegments
+        )
+    }
+
+    private fun resolveFormatUrl(
+        videoId: String,
+        fmt: JSONObject,
+        deobfuscateThrottling: Boolean
+    ): String? {
+        val directUrl = fmt.optString("url", "")
+        if (directUrl.isNotBlank()) {
+            return if (deobfuscateThrottling) {
+                runCatching {
+                    YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(videoId, directUrl)
+                }.getOrDefault(directUrl)
+            } else {
+                directUrl
+            }
+        }
+
+        val cipherStr = fmt.optString("signatureCipher", fmt.optString("cipher", ""))
+        if (cipherStr.isBlank()) return null
+
+        val params = parseQueryParams(cipherStr)
+        val rawUrl = params["url"] ?: return null
+        val obfuscatedSig = params["s"]
+        val sigParamName = params["sp"] ?: "sig"
+
+        val signedUrl = if (!obfuscatedSig.isNullOrBlank()) {
+            val decryptedSig = runCatching {
+                YoutubeJavaScriptPlayerManager.deobfuscateSignature(videoId, obfuscatedSig)
+            }.getOrNull() ?: return null
+            val separator = if (rawUrl.contains("?")) "&" else "?"
+            "$rawUrl$separator$sigParamName=${URLEncoder.encode(decryptedSig, "UTF-8")}"
+        } else {
+            rawUrl
+        }
+
+        return if (deobfuscateThrottling) {
+            runCatching {
+                YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(videoId, signedUrl)
+            }.getOrDefault(signedUrl)
+        } else {
+            signedUrl
+        }
+    }
+
+    private fun parseQueryParams(query: String): Map<String, String> {
+        val map = LinkedHashMap<String, String>()
+        query.split("&").forEach { pair ->
+            val idx = pair.indexOf('=')
+            if (idx > 0) {
+                val key = URLDecoder.decode(pair.substring(0, idx), "UTF-8")
+                val value = URLDecoder.decode(pair.substring(idx + 1), "UTF-8")
+                map[key] = value
+            }
+        }
+        return map
+    }
+
+    private fun getVisitorData(): String? {
+        val now = System.currentTimeMillis()
+        val existing = cachedVisitorData
+        if (!existing.isNullOrBlank() && now - visitorDataFetchedAtMs < 30L * 60L * 1000L) {
+            return existing
+        }
+
+        val fetched = runCatching {
+            val req = Request.Builder()
+                .url("https://www.youtube.com/sw.js_data")
+                .header("User-Agent", DownloaderImpl.USER_AGENT)
+                .get()
+                .build()
+            DownloaderImpl.getInstance().rawClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return@runCatching null
+                val body = res.body?.string() ?: return@runCatching null
+                Regex("(Cg[A-Za-z0-9_%-]{15,})").find(body)?.groupValues?.getOrNull(1)
+            }
+        }.getOrNull()
+
+        if (!fetched.isNullOrBlank()) {
+            cachedVisitorData = fetched
+            visitorDataFetchedAtMs = now
+        }
+        return fetched ?: existing
+    }
+
+    private fun isLoginRequiredError(err: Throwable): Boolean {
+        var cur: Throwable? = err
+        while (cur != null) {
+            if (cur is LoginRequiredException ||
+                cur is SignInConfirmNotBotException ||
+                cur is AgeRestrictedContentException
+            ) {
+                return true
+            }
+            val msg = cur.message.orEmpty()
+            if (msg.contains("LOGIN_REQUIRED", ignoreCase = true) ||
+                msg.contains("not a bot", ignoreCase = true) ||
+                msg.contains("Sign in to confirm", ignoreCase = true)
+            ) {
+                return true
+            }
+            cur = cur.cause
+        }
+        return false
+    }
 
     private fun resolveChannelFromHtml(url: String): Pair<String?, String?> {
         return runCatching {
@@ -395,5 +845,64 @@ class YouTubeRepository(private val context: Context) {
     private fun extractVideoId(url: String): String? {
         val match = Regex("(?:v=|youtu\\.be/|shorts/|live/)([A-Za-z0-9_-]{11})").find(url)
         return match?.groupValues?.getOrNull(1)
+    }
+
+    companion object {
+        private val CLIENT_ANDROID_VR = InnertubeClient(
+            clientName = "ANDROID_VR",
+            clientVersion = "1.61.48",
+            clientIdHeader = "28",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            deviceMake = "Oculus",
+            deviceModel = "Quest 3",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
+            needsSignatureTimestamp = false,
+            sendCookies = false
+        )
+
+        private val CLIENT_IOS = InnertubeClient(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            clientIdHeader = "5",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iPhone",
+            osVersion = "18.3.2.22D82",
+            needsSignatureTimestamp = false,
+            sendCookies = false
+        )
+
+        private val CLIENT_ANDROID = InnertubeClient(
+            clientName = "ANDROID",
+            clientVersion = "20.10.38",
+            clientIdHeader = "3",
+            userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
+            osName = "Android",
+            osVersion = "14",
+            androidSdkVersion = 34,
+            needsSignatureTimestamp = false,
+            sendCookies = false
+        )
+
+        private val CLIENT_TVHTML5_AUTH = InnertubeClient(
+            clientName = "TVHTML5",
+            clientVersion = "7.20250312.16.00",
+            clientIdHeader = "7",
+            userAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
+            needsSignatureTimestamp = true,
+            sendCookies = true
+        )
+
+        private val CLIENT_WEB_AUTH = InnertubeClient(
+            clientName = "WEB",
+            clientVersion = "2.20250312.04.00",
+            clientIdHeader = "1",
+            userAgent = DownloaderImpl.USER_AGENT,
+            needsSignatureTimestamp = true,
+            sendCookies = true
+        )
     }
 }

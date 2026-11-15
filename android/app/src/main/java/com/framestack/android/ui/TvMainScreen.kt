@@ -1,10 +1,11 @@
 package com.framestack.android.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -26,8 +27,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -36,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import com.framestack.android.R
 import com.framestack.android.data.VideoItem
 import com.framestack.android.data.VideoSource
 import kotlinx.coroutines.delay
@@ -45,6 +49,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
     val state by viewModel.uiState.collectAsState()
     var isWatchingPlayer by rememberSaveable { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var showSignInDialog by remember { mutableStateOf(false) }
     var queueQuery by remember { mutableStateOf("") }
 
     val activeSource = remember(state.sources, state.activeSourceId) {
@@ -73,6 +78,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
             loopQueue = state.loopQueue,
             loadingStream = state.loadingStream,
             streamError = state.streamError,
+            isLoginRequired = state.isLoginRequired,
             skipBannerText = state.skipBannerText,
             onSelectQuality = viewModel::selectQuality,
             onSetSpeed = viewModel::setPlaybackSpeed,
@@ -82,12 +88,27 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
             onSkipBanner = viewModel::showSkipBanner,
             onClearSkipBanner = viewModel::clearSkipBanner,
             onRetry = {
-                activeVideo?.let { viewModel.playVideo(it) }
+                activeVideo?.let { viewModel.playVideo(it, forceRefresh = true) }
             },
+            onOpenSignIn = { showSignInDialog = true },
             onNext = viewModel::playNext,
             onPrevious = viewModel::playPrevious,
             onExitPlayer = { isWatchingPlayer = false }
         )
+        if (showSignInDialog) {
+            YouTubeSignInDialog(
+                isSignedIn = state.isSignedIn,
+                onSignedIn = { cookies ->
+                    showSignInDialog = false
+                    viewModel.onYouTubeCookiesSaved(cookies)
+                },
+                onSignOut = {
+                    viewModel.signOutYouTube()
+                    showSignInDialog = false
+                },
+                onDismiss = { showSignInDialog = false }
+            )
+        }
         return
     }
 
@@ -118,12 +139,34 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "FrameStack",
-                    color = Color(0xFFF4F4F5),
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFF1F1F26), Color(0xFF0E0E12))
+                                )
+                            )
+                            .border(1.dp, Color(0x44F59E0B), RoundedCornerShape(9.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                            contentDescription = "FrameStack Logo",
+                            tint = Color.Unspecified,
+                            modifier = Modifier.size(38.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "FrameStack",
+                        color = Color(0xFFF4F4F5),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Surface(
                     color = Color(0x33F59E0B),
                     shape = RoundedCornerShape(6.dp),
@@ -177,6 +220,15 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            TvSidebarButton(
+                label = if (state.isSignedIn) "YouTube Signed In" else "YouTube Sign-In",
+                icon = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.Rounded.Login,
+                isPrimary = false,
+                onClick = { showSignInDialog = true }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             TvSidebarButton(
                 label = "Reset Defaults",
@@ -249,7 +301,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                         TvActionButton(
                             label = "Refresh",
                             icon = Icons.Rounded.Refresh,
-                            onClick = { viewModel.selectSource(activeSource, autoPlay = false) }
+                            onClick = { viewModel.selectSource(activeSource, autoPlay = false, forceRefresh = true) }
                         )
 
                         if (state.sources.size > 1) {
@@ -325,7 +377,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                                 icon = Icons.Rounded.Refresh,
                                 highlighted = true,
                                 onClick = {
-                                    activeSource?.let { viewModel.selectSource(it, autoPlay = false) }
+                                    activeSource?.let { viewModel.selectSource(it, autoPlay = false, forceRefresh = true) }
                                 }
                             )
                         }
@@ -391,6 +443,21 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
             }
         )
     }
+
+    if (showSignInDialog) {
+        YouTubeSignInDialog(
+            isSignedIn = state.isSignedIn,
+            onSignedIn = { cookies ->
+                showSignInDialog = false
+                viewModel.onYouTubeCookiesSaved(cookies)
+            },
+            onSignOut = {
+                viewModel.signOutYouTube()
+                showSignInDialog = false
+            },
+            onDismiss = { showSignInDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -403,28 +470,33 @@ private fun TvSidebarButton(
 ) {
     var focused by remember { mutableStateOf(false) }
 
-    val bg = when {
-        focused -> Color(0xFFF59E0B)
-        isPrimary -> Color(0x26F59E0B)
-        else -> Color(0xFF18181B)
-    }
+    val scale by animateFloatAsState(if (focused) 1.04f else 1f)
+    val bg by animateColorAsState(
+        when {
+            focused -> Color(0xFFF59E0B)
+            isPrimary -> Color(0x26F59E0B)
+            else -> Color(0xFF18181B)
+        }
+    )
     val fg = when {
         focused -> Color(0xFF09090B)
         isPrimary -> Color(0xFFF59E0B)
         else -> Color(0xFFE4E4E7)
     }
-    val border = when {
-        focused -> Color(0xFFFDE68A)
-        isPrimary -> Color(0xFFF59E0B)
-        else -> Color(0xFF27272A)
-    }
+    val border by animateColorAsState(
+        when {
+            focused -> Color(0xFFFDE68A)
+            isPrimary -> Color(0xFFF59E0B)
+            else -> Color(0xFF27272A)
+        }
+    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .scale(if (focused) 1.03f else 1f)
+            .scale(scale)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .border(if (focused) 2.dp else 1.dp, border, RoundedCornerShape(10.dp))
@@ -452,26 +524,32 @@ private fun TvSourceNavItem(
 ) {
     var focused by remember { mutableStateOf(false) }
 
-    val bg = when {
-        focused -> Color(0xFF27272A)
-        isActive -> Color(0x22F59E0B)
-        else -> Color(0xFF18181B)
-    }
+    val scale by animateFloatAsState(if (focused) 1.03f else 1f)
+    val bg by animateColorAsState(
+        when {
+            focused -> Color(0xFF27272A)
+            isActive -> Color(0x22F59E0B)
+            else -> Color(0xFF18181B)
+        }
+    )
+    val border by animateColorAsState(
+        when {
+            focused -> Color(0xFFF59E0B)
+            isActive -> Color(0x99F59E0B)
+            else -> Color(0xFF27272A)
+        }
+    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .scale(if (focused) 1.03f else 1f)
+            .scale(scale)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .border(
                 width = if (focused) 2.dp else 1.dp,
-                color = when {
-                    focused -> Color(0xFFF59E0B)
-                    isActive -> Color(0x99F59E0B)
-                    else -> Color(0xFF27272A)
-                },
+                color = border,
                 shape = RoundedCornerShape(10.dp)
             )
             .onFocusChanged { focused = it.isFocused }
@@ -514,19 +592,25 @@ private fun TvVideoCard(
 ) {
     var focused by remember { mutableStateOf(false) }
 
+    val scale by animateFloatAsState(if (focused) 1.05f else 1f)
+    val cardBg by animateColorAsState(if (focused) Color(0xFF1C1C22) else Color(0xFF111114))
+    val border by animateColorAsState(
+        when {
+            focused -> Color(0xFFF59E0B)
+            isPlayingVideo -> Color(0x88F59E0B)
+            else -> Color(0xFF27272A)
+        }
+    )
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .scale(if (focused) 1.04f else 1f)
+            .scale(scale)
             .clip(RoundedCornerShape(14.dp))
-            .background(if (focused) Color(0xFF1C1C22) else Color(0xFF111114))
+            .background(cardBg)
             .border(
                 width = if (focused) 3.dp else 1.dp,
-                color = when {
-                    focused -> Color(0xFFF59E0B)
-                    isPlayingVideo -> Color(0x88F59E0B)
-                    else -> Color(0xFF27272A)
-                },
+                color = border,
                 shape = RoundedCornerShape(14.dp)
             )
             .onFocusChanged { focused = it.isFocused }

@@ -5,6 +5,8 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -44,11 +46,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
@@ -71,6 +76,7 @@ fun TvVideoPlayer(
     loopQueue: Boolean,
     loadingStream: Boolean,
     streamError: String?,
+    isLoginRequired: Boolean = false,
     skipBannerText: String?,
     onSelectQuality: (QualityOption) -> Unit,
     onSetSpeed: (Float) -> Unit,
@@ -80,23 +86,27 @@ fun TvVideoPlayer(
     onSkipBanner: (String) -> Unit,
     onClearSkipBanner: () -> Unit,
     onRetry: () -> Unit,
+    onOpenSignIn: () -> Unit = {},
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onExitPlayer: () -> Unit
 ) {
     val context = LocalContext.current
-    val dataSourceFactory = remember {
-        OkHttpDataSource.Factory(DownloaderImpl.getInstance().client)
-            .setUserAgent(DownloaderImpl.USER_AGENT)
-    }
 
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            playWhenReady = true
-        }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(10_000, 30_000, 800, 1_500)
+            .build()
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                playWhenReady = true
+            }
     }
 
     var isPlaying by remember { mutableStateOf(false) }
+    var isBuffering by remember { mutableStateOf(false) }
     var currentPosMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var osdVisible by remember { mutableStateOf(true) }
@@ -133,6 +143,8 @@ fun TvVideoPlayer(
         }
     }
 
+    var playbackErrorText by remember(quality?.videoUrl) { mutableStateOf<String?>(null) }
+
     // Listen to ExoPlayer events
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -141,9 +153,14 @@ fun TvVideoPlayer(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                isBuffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState == Player.STATE_ENDED) {
                     onNext()
                 }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playbackErrorText = "Playback failed (${error.errorCodeName}). Press Retry to refresh stream."
             }
         }
         exoPlayer.addListener(listener)
@@ -154,8 +171,9 @@ fun TvVideoPlayer(
     }
 
     // Prepare media source when quality/video changes
-    LaunchedEffect(quality?.videoUrl, quality?.audioUrl) {
+    LaunchedEffect(quality?.videoUrl, quality?.audioUrl, quality?.userAgent, quality?.isHls) {
         val q = quality ?: return@LaunchedEffect
+        playbackErrorText = null
         val resumePos = if (exoPlayer.currentPosition > 1000L && exoPlayer.mediaItemCount > 0) {
             exoPlayer.currentPosition
         } else {
@@ -163,15 +181,25 @@ fun TvVideoPlayer(
         }
         lastSkippedUuid = null
 
-        val mediaSource = if (!q.isMuxed && !q.audioUrl.isNullOrBlank()) {
-            val videoSrc = ProgressiveMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(q.videoUrl))
-            val audioSrc = ProgressiveMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(q.audioUrl))
-            MergingMediaSource(videoSrc, audioSrc)
-        } else {
-            ProgressiveMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(q.videoUrl))
+        val dataSourceFactory = OkHttpDataSource.Factory(DownloaderImpl.getInstance().rawClient)
+            .setUserAgent(q.userAgent ?: DownloaderImpl.USER_AGENT)
+
+        val mediaSource = when {
+            q.isHls -> {
+                HlsMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(q.videoUrl))
+            }
+            !q.isMuxed && !q.audioUrl.isNullOrBlank() -> {
+                val videoSrc = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(q.videoUrl))
+                val audioSrc = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(q.audioUrl))
+                MergingMediaSource(videoSrc, audioSrc)
+            }
+            else -> {
+                ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(q.videoUrl))
+            }
         }
 
         exoPlayer.setMediaSource(mediaSource)
@@ -340,11 +368,11 @@ fun TvVideoPlayer(
                 .clickable { bumpOsd() }
         )
 
-        if (loadingStream) {
+        if (loadingStream || (isBuffering && streamError == null)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0x8809090B)),
+                    .background(if (loadingStream) Color(0x8809090B) else Color.Transparent),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -352,12 +380,14 @@ fun TvVideoPlayer(
                         color = Color(0xFFF59E0B),
                         modifier = Modifier.size(48.dp)
                     )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "Resolving native stream...",
-                        color = Color(0xFFE4E4E7),
-                        fontSize = 16.sp
-                    )
+                    if (loadingStream) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = "Resolving native stream...",
+                            color = Color(0xFFE4E4E7),
+                            fontSize = 16.sp
+                        )
+                    }
                 }
             }
         }
@@ -376,7 +406,9 @@ fun TvVideoPlayer(
             )
         }
 
-        if (!streamError.isNullOrBlank()) {
+        val activeErrorText = streamError ?: playbackErrorText
+
+        if (!activeErrorText.isNullOrBlank()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -386,32 +418,44 @@ fun TvVideoPlayer(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .widthIn(max = 540.dp)
+                        .widthIn(max = 580.dp)
                         .clip(RoundedCornerShape(18.dp))
                         .background(Color(0xFF111114))
                         .border(1.dp, Color(0xFF27272A), RoundedCornerShape(18.dp))
                         .padding(28.dp)
                 ) {
                     Text(
-                        text = "Playback Error",
+                        text = if (isLoginRequired) "YouTube Sign-In Verification" else "Playback Error",
                         color = Color(0xFFFCA5A5),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = streamError,
+                        text = activeErrorText,
                         color = Color(0xFFD4D4D8),
                         fontSize = 15.sp
                     )
                     Spacer(modifier = Modifier.height(20.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (isLoginRequired) {
+                            TvActionButton(
+                                label = "Sign in with YouTube",
+                                icon = Icons.Rounded.Login,
+                                highlighted = true,
+                                focusRequester = retryFocusRequester,
+                                onClick = onOpenSignIn
+                            )
+                        }
                         TvActionButton(
                             label = "Retry",
                             icon = Icons.Rounded.Refresh,
-                            highlighted = true,
-                            focusRequester = retryFocusRequester,
-                            onClick = onRetry
+                            highlighted = !isLoginRequired,
+                            focusRequester = if (isLoginRequired) null else retryFocusRequester,
+                            onClick = {
+                                playbackErrorText = null
+                                onRetry()
+                            }
                         )
                         TvActionButton(
                             label = "Back to Queue",
@@ -425,7 +469,7 @@ fun TvVideoPlayer(
 
         // TV On-Screen Display (OSD)
         AnimatedVisibility(
-            visible = osdVisible && streamError == null,
+            visible = osdVisible && activeErrorText == null,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -731,23 +775,28 @@ fun TvActionButton(
 ) {
     var focused by remember { mutableStateOf(false) }
 
-    val bg = when {
-        focused -> Color(0xFFF59E0B)
-        highlighted -> Color(0xFF27272A)
-        else -> Color(0xFF18181B)
-    }
+    val scale by animateFloatAsState(if (focused) 1.07f else 1f)
+    val bg by animateColorAsState(
+        when {
+            focused -> Color(0xFFF59E0B)
+            highlighted -> Color(0xFF27272A)
+            else -> Color(0xFF18181B)
+        }
+    )
     val fg = when {
         focused -> Color(0xFF09090B)
         activeTint != null -> activeTint
         else -> Color(0xFFF4F4F5)
     }
-    val borderColor = if (focused) Color(0xFFFDE68A) else Color(0xFF27272A)
+    val borderColor by animateColorAsState(
+        if (focused) Color(0xFFFDE68A) else Color(0xFF27272A)
+    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .scale(if (focused) 1.06f else 1f)
+            .scale(scale)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .border(if (focused) 2.dp else 1.dp, borderColor, RoundedCornerShape(10.dp))

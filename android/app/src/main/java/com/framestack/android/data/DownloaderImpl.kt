@@ -1,5 +1,8 @@
 package com.framestack.android.data
 
+import android.content.Context
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.downloader.Downloader
@@ -11,10 +14,29 @@ import java.util.concurrent.TimeUnit
 
 class DownloaderImpl private constructor() : Downloader() {
 
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .readTimeout(30, TimeUnit.SECONDS)
-        .connectTimeout(20, TimeUnit.SECONDS)
+    private val dispatcher = Dispatcher().apply {
+        maxRequests = 32
+        maxRequestsPerHost = 12
+    }
+
+    val rawClient: OkHttpClient = OkHttpClient.Builder()
+        .dispatcher(dispatcher)
+        .connectionPool(ConnectionPool(12, 5, TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
         .build()
+
+    val client: OkHttpClient = rawClient
+
+    @Volatile
+    private var authManager: YouTubeAuthManager? = null
+
+    fun attachContext(context: Context) {
+        if (authManager == null) {
+            authManager = YouTubeAuthManager(context.applicationContext)
+        }
+    }
 
     @Throws(IOException::class, ReCaptchaException::class)
     override fun execute(request: Request): Response {
@@ -27,8 +49,27 @@ class DownloaderImpl private constructor() : Downloader() {
             .url(url)
             .header("User-Agent", USER_AGENT)
 
-        if (url.contains("youtube.com") && !headers.keys.any { it.equals("Cookie", ignoreCase = true) }) {
-            builder.addHeader("Cookie", YOUTUBE_CONSENT_COOKIE)
+        val isYouTubeHost = url.contains("youtube.com") || url.contains("youtubei.googleapis.com")
+        if (isYouTubeHost) {
+            val auth = authManager
+            if (auth != null && auth.isSignedIn()) {
+                val authHeaders = auth.buildAuthHeaders()
+                authHeaders["Cookie"]?.let { cookie ->
+                    if (!headers.keys.any { it.equals("Cookie", ignoreCase = true) }) {
+                        builder.addHeader("Cookie", cookie)
+                    }
+                }
+                authHeaders["Authorization"]?.let { authHeader ->
+                    if (!headers.keys.any { it.equals("Authorization", ignoreCase = true) }) {
+                        builder.addHeader("Authorization", authHeader)
+                        builder.addHeader("X-Origin", "https://www.youtube.com")
+                        builder.addHeader("Origin", "https://www.youtube.com")
+                        builder.addHeader("X-Goog-AuthUser", "0")
+                    }
+                }
+            } else if (!headers.keys.any { it.equals("Cookie", ignoreCase = true) }) {
+                builder.addHeader("Cookie", YOUTUBE_CONSENT_COOKIE)
+            }
         }
 
         // Preserve every header supplied by NewPipeExtractor (including client-specific User-Agent)
@@ -73,6 +114,10 @@ class DownloaderImpl private constructor() : Downloader() {
 
         @Volatile
         private var instance: DownloaderImpl? = null
+
+        fun init(context: Context) {
+            getInstance().attachContext(context)
+        }
 
         fun getInstance(): DownloaderImpl {
             return instance ?: synchronized(this) {
