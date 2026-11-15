@@ -197,9 +197,34 @@ fun MainScreen(viewModel: PlayerViewModel) {
                             )
                         }
                         !state.queueError.isNullOrBlank() && state.queue.isEmpty() -> {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.align(Alignment.Center).padding(16.dp)
+                            ) {
+                                Text(
+                                    text = state.queueError ?: "Failed to load queue.",
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 13.sp
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        state.sources.firstOrNull { it.id == state.activeSourceId }
+                                            ?.let { viewModel.selectSource(it) }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFF59E0B),
+                                        contentColor = Color(0xFF09090B)
+                                    )
+                                ) {
+                                    Text("Retry", fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        state.queue.isEmpty() -> {
                             Text(
-                                text = state.queueError ?: "Failed to load queue.",
-                                color = Color(0xFFFCA5A5),
+                                text = "No videos returned for this source. Tap refresh to retry.",
+                                color = Color(0xFFA1A1AA),
                                 fontSize = 13.sp,
                                 modifier = Modifier.align(Alignment.Center).padding(16.dp)
                             )

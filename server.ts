@@ -17,6 +17,13 @@ interface FeedVideo {
   views?: number;
 }
 
+const YOUTUBE_FETCH_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept-Language': 'en-US,en;q=0.9',
+  Cookie: 'CONSENT=PENDING+987; SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg',
+};
+
 function decodeXmlEntities(input: string): string {
   return input
     .replace(/&amp;/g, '&')
@@ -91,12 +98,7 @@ async function resolveChannelIdFromHandle(urlStr: string): Promise<string | null
     return null;
   }
 
-  const res = await fetch(parsed.toString(), {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; FrameStackBot/1.0)',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
+  const res = await fetch(parsed.toString(), { headers: YOUTUBE_FETCH_HEADERS });
   if (!res.ok) return null;
   const html = await res.text();
 
@@ -105,12 +107,74 @@ async function resolveChannelIdFromHandle(urlStr: string): Promise<string | null
     /<meta\s+itemprop="identifier"\s+content="(UC[\w-]+)"/i,
     /"channelId":"(UC[\w-]+)"/,
     /channel_id=(UC[\w-]+)/,
+    /"browseId":"(UC[\w-]+)"/,
   ];
   for (const pattern of patterns) {
     const match = html.match(pattern);
     if (match?.[1]) return match[1];
   }
   return null;
+}
+
+async function scrapePlaylistHtmlFallback(playlistId: string) {
+  const res = await fetch(
+    `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`,
+    { headers: YOUTUBE_FETCH_HEADERS }
+  );
+  if (!res.ok) return null;
+  const html = await res.text();
+
+  const dataMatch = html.match(/var ytInitialData\s*=\s*(\{[\s\S]*?\});<\/script>/);
+  if (!dataMatch?.[1]) return null;
+
+  try {
+    const data = JSON.parse(dataMatch[1]);
+    const sourceTitle =
+      data?.metadata?.playlistMetadataRenderer?.title || 'YouTube Playlist';
+    const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+    const videos: FeedVideo[] = [];
+    const seen = new Set<string>();
+
+    const walk = (node: unknown) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item);
+        return;
+      }
+      const obj = node as Record<string, unknown>;
+      const renderer = obj.playlistVideoRenderer as Record<string, unknown> | undefined;
+      if (renderer && typeof renderer.videoId === 'string' && !seen.has(renderer.videoId)) {
+        seen.add(renderer.videoId);
+        const videoId = renderer.videoId;
+        const titleRuns = (renderer.title as { runs?: Array<{ text?: string }> })?.runs;
+        const simpleTitle = (renderer.title as { simpleText?: string })?.simpleText;
+        const title = titleRuns?.map((r) => r.text || '').join('') || simpleTitle || 'Untitled Video';
+        const ownerRuns = (renderer.shortBylineText as { runs?: Array<{ text?: string }> })?.runs;
+        const author = ownerRuns?.[0]?.text || sourceTitle;
+        videos.push({
+          videoId,
+          title,
+          author,
+          published: '',
+          thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          description: '',
+        });
+      }
+      for (const val of Object.values(obj)) {
+        walk(val);
+      }
+    };
+
+    walk(tabs);
+    if (videos.length === 0) return null;
+    return {
+      sourceTitle,
+      playlistId,
+      videos: videos.slice(0, 50),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function startServer() {
@@ -141,28 +205,38 @@ async function startServer() {
         return res.status(400).json({ error: 'Provide channelId, playlistId, or url query parameter.' });
       }
 
-      const feedUrl = playlistId
-        ? `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(playlistId)}`
-        : `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId!)}`;
+      const xmlChannelId =
+        channelId || (playlistId?.startsWith('UU') ? `UC${playlistId.slice(2)}` : undefined);
 
-      const feedRes = await fetch(feedUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; FrameStackBot/1.0)',
-        },
-      });
+      const feedUrl =
+        playlistId && !playlistId.startsWith('UU')
+          ? `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(playlistId)}`
+          : `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(xmlChannelId!)}`;
 
-      if (!feedRes.ok) {
-        return res.status(feedRes.status).json({
-          error: `YouTube feed returned HTTP ${feedRes.status}`,
-          channelId,
-          playlistId,
-        });
+      const feedRes = await fetch(feedUrl, { headers: YOUTUBE_FETCH_HEADERS });
+
+      if (feedRes.ok) {
+        const xml = await feedRes.text();
+        const parsed = parseYouTubeAtom(xml, xmlChannelId, playlistId);
+        if (parsed.videos.length > 0) {
+          res.setHeader('Cache-Control', 'public, max-age=120');
+          return res.json(parsed);
+        }
       }
 
-      const xml = await feedRes.text();
-      const parsed = parseYouTubeAtom(xml, channelId, playlistId);
-      res.setHeader('Cache-Control', 'public, max-age=120');
-      return res.json(parsed);
+      if (playlistId) {
+        const scraped = await scrapePlaylistHtmlFallback(playlistId);
+        if (scraped) {
+          res.setHeader('Cache-Control', 'public, max-age=120');
+          return res.json(scraped);
+        }
+      }
+
+      return res.status(feedRes.ok ? 404 : feedRes.status).json({
+        error: `YouTube feed returned HTTP ${feedRes.status}`,
+        channelId: xmlChannelId,
+        playlistId,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unexpected feed error';
       return res.status(500).json({ error: message });

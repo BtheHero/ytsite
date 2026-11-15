@@ -236,6 +236,8 @@ export function YouTubeStage({
               } else {
                 event.target.loadVideoById(activeVideoIdRef.current);
               }
+            } else if (source?.playlistId) {
+              event.target.cuePlaylist({ listType: 'playlist', list: source.playlistId });
             }
           },
           onStateChange: (event) => {
@@ -252,6 +254,12 @@ export function YouTubeStage({
               }
             } else if (state === 2 || state === 5) {
               setIsPlaying(false);
+              if (state === 5) {
+                const listIds = event.target.getPlaylist?.();
+                if (Array.isArray(listIds) && listIds.length > 0 && onDiscoverRef.current) {
+                  onDiscoverRef.current(listIds);
+                }
+              }
             } else if (state === 0) {
               setIsPlaying(false);
               onNextRef.current();
@@ -302,7 +310,7 @@ export function YouTubeStage({
     if (activeVideo?.videoId) {
       player.loadVideoById(activeVideo.videoId);
     } else if (source?.playlistId) {
-      player.loadPlaylist({ listType: 'playlist', list: source.playlistId });
+      player.cuePlaylist({ listType: 'playlist', list: source.playlistId });
     }
   }, [activeVideo?.videoId, source?.playlistId, playerReady]);
 

@@ -16,8 +16,10 @@ export function extractVideoIdFromUrl(url: string): string | null {
       const seg = parsed.pathname.replace(/^\//, '').split('/')[0];
       if (seg && /^[\w-]{11}$/.test(seg)) return seg;
     }
+    const pathMatch = parsed.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]{11})/);
+    if (pathMatch?.[1]) return pathMatch[1];
   } catch {
-    const match = url.match(/(?:v=|youtu\.be\/)([\w-]{11})/);
+    const match = url.match(/(?:v=|youtu\.be\/|\/shorts\/|\/live\/)([\w-]{11})/);
     if (match?.[1]) return match[1];
   }
   return null;
@@ -147,7 +149,10 @@ export async function fetchSourceFeed(
       params.set('url', source.url);
     }
 
-    const res = await fetch(`./api/feed?${params.toString()}`);
+    let res = await fetch(`./api/feed?${params.toString()}`);
+    if (!res.ok) {
+      res = await fetch(`/api/feed?${params.toString()}`);
+    }
     const contentType = res.headers.get('content-type') || '';
     if (res.ok && contentType.includes('application/json')) {
       const data = await res.json();
