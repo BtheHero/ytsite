@@ -1,0 +1,55 @@
+{
+  "sources": [
+    {
+      "id": "src-3b1b",
+      "type": "channel",
+      "title": "3Blue1Brown",
+      "category": "Mathematics",
+      "channelId": "UCYO_jab_esuFRV4b17AJtAw",
+      "playlistId": "UUYO_jab_esuFRV4b17AJtAw",
+      "url": "https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw"
+    },
+    {
+      "id": "src-kurzgesagt",
+      "type": "channel",
+      "title": "Kurzgesagt – In a Nutshell",
+      "category": "Science",
+      "channelId": "UCsXVk37bltHxD1rDPwtNM8Q",
+      "playlistId": "UUsXVk37bltHxD1rDPwtNM8Q",
+      "url": "https://www.youtube.com/channel/UCsXVk37bltHxD1rDPwtNM8Q"
+    },
+    {
+      "id": "src-nasa",
+      "type": "channel",
+      "title": "NASA",
+      "category": "Space",
+      "channelId": "UCLA_DiR1FfKNvjuUpBHmylQ",
+      "playlistId": "UULA_DiR1FfKNvjuUpBHmylQ",
+      "url": "https://www.youtube.com/channel/UCLA_DiR1FfKNvjuUpBHmylQ"
+    },
+    {
+      "id": "src-tinydesk",
+      "type": "playlist",
+      "title": "Tiny Desk Concerts",
+      "category": "Music",
+      "playlistId": "PL1B627337ED6F55F0",
+      "url": "https://www.youtube.com/playlist?list=PL1B627337ED6F55F0"
+    },
+    {
+      "id": "src-linear-algebra",
+      "type": "playlist",
+      "title": "Essence of Linear Algebra",
+      "category": "Mathematics",
+      "playlistId": "PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab",
+      "url": "https://www.youtube.com/playlist?list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab"
+    },
+    {
+      "id": "src-blender",
+      "type": "playlist",
+      "title": "Blender Fundamentals",
+      "category": "Design & 3D",
+      "playlistId": "PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6",
+      "url": "https://www.youtube.com/playlist?list=PLa1F2ddGya_-UvuAqHAksYnB0qL9yWDO6"
+    }
+  ]
+}
