@@ -11,8 +11,6 @@ import {
   Shuffle,
   Repeat,
   ExternalLink,
-  Copy,
-  Check,
   ChevronDown,
   ChevronUp,
   RotateCcw,
@@ -22,6 +20,7 @@ import {
   Aperture,
   Expand,
   Shrink,
+  Scissors,
 } from 'lucide-react';
 import { VideoItem, VideoSource } from '../types/youtube';
 import { formatRelativeDate, formatTimecode, formatViews } from '../utils/youtube';
@@ -121,6 +120,12 @@ interface YouTubeStageProps {
 
 type AspectMode = '16:9' | '21:9' | '4:3';
 
+interface SponsorSegment {
+  UUID: string;
+  category: string;
+  segment: [number, number];
+}
+
 const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
 const ASPECT_CYCLE: AspectMode[] = ['16:9', '21:9', '4:3'];
 
@@ -165,10 +170,13 @@ export function YouTubeStage({
   const [ambientMode, setAmbientMode] = useState(true);
   const [aspectMode, setAspectMode] = useState<AspectMode>('16:9');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
   const [showDescription, setShowDescription] = useState(false);
   const [embedError, setEmbedError] = useState<string | null>(null);
   const [ambientImgFailed, setAmbientImgFailed] = useState(false);
+  const [sponsorBlockEnabled, setSponsorBlockEnabled] = useState(true);
+  const [sponsorSegments, setSponsorSegments] = useState<SponsorSegment[]>([]);
+  const [skipNotice, setSkipNotice] = useState<string | null>(null);
+  const lastSkippedUuidRef = useRef<string | null>(null);
 
   // Sync fullscreen state with browser events
   useEffect(() => {
@@ -298,7 +306,40 @@ export function YouTubeStage({
     }
   }, [activeVideo?.videoId, source?.playlistId, playerReady]);
 
-  // Poll playback timecode while playing
+  // Fetch community SponsorBlock segments for active video
+  useEffect(() => {
+    setSponsorSegments([]);
+    setSkipNotice(null);
+    lastSkippedUuidRef.current = null;
+
+    const videoId = activeVideo?.videoId;
+    if (!videoId) return;
+
+    const controller = new AbortController();
+    const categories = encodeURIComponent(JSON.stringify(['sponsor', 'selfpromo', 'interaction']));
+    fetch(
+      `https://sponsor.ajay.app/api/skipSegments?videoID=${encodeURIComponent(videoId)}&categories=${categories}`,
+      { signal: controller.signal }
+    )
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setSponsorSegments(
+            data.filter(
+              (seg): seg is SponsorSegment =>
+                Boolean(seg?.UUID && Array.isArray(seg.segment) && seg.segment.length === 2)
+            )
+          );
+        }
+      })
+      .catch(() => {
+        // Ignore network errors or aborted requests
+      });
+
+    return () => controller.abort();
+  }, [activeVideo?.videoId]);
+
+  // Poll playback timecode while playing and auto-skip sponsor segments
   useEffect(() => {
     if (!isPlaying) return;
     const interval = window.setInterval(() => {
@@ -307,14 +348,38 @@ export function YouTubeStage({
       try {
         const t = player.getCurrentTime();
         const d = player.getDuration();
-        if (Number.isFinite(t)) setCurrentTime(t);
+        if (Number.isFinite(t)) {
+          setCurrentTime(t);
+
+          if (sponsorBlockEnabled && sponsorSegments.length > 0) {
+            const hit = sponsorSegments.find(
+              (seg) => t >= seg.segment[0] && t < seg.segment[1] - 0.6
+            );
+            if (hit && lastSkippedUuidRef.current !== hit.UUID) {
+              lastSkippedUuidRef.current = hit.UUID;
+              const targetEnd = hit.segment[1];
+              player.seekTo(targetEnd, true);
+              setCurrentTime(targetEnd);
+              const label =
+                hit.category === 'selfpromo'
+                  ? 'Skipped self-promotion segment'
+                  : hit.category === 'interaction'
+                    ? 'Skipped interaction reminder'
+                    : 'Skipped sponsor segment';
+              setSkipNotice(label);
+              window.setTimeout(() => {
+                setSkipNotice((prev) => (prev === label ? null : prev));
+              }, 2600);
+            }
+          }
+        }
         if (Number.isFinite(d) && d > 0) setDuration(d);
       } catch {
         // Ignore transient state
       }
     }, 250);
     return () => window.clearInterval(interval);
-  }, [isPlaying]);
+  }, [isPlaying, sponsorBlockEnabled, sponsorSegments]);
 
   const togglePlay = useCallback(() => {
     const player = playerRef.current;
@@ -468,18 +533,6 @@ export function YouTubeStage({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [togglePlay, seekBy, toggleMute, toggleFullscreen]);
 
-  const handleCopyVideoUrl = async () => {
-    if (!activeVideo) return;
-    const ytUrl = `https://www.youtube.com/watch?v=${activeVideo.videoId}`;
-    try {
-      await navigator.clipboard.writeText(ytUrl);
-      setCopiedLink(true);
-      window.setTimeout(() => setCopiedLink(false), 1800);
-    } catch {
-      // Clipboard blocked
-    }
-  };
-
   const progressPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
   const aspectClass = isFullscreen
@@ -556,12 +609,36 @@ export function YouTubeStage({
             isFullscreen ? 'shrink-0' : 'mt-3'
           }`}
         >
-          {/* Scrubber */}
+          {/* Scrubber with SponsorBlock segment markers */}
           <div className="flex items-center gap-3 mb-2.5">
             <span className="font-mono text-xs text-zinc-400 tabular-nums w-12 text-right shrink-0">
               {formatTimecode(currentTime)}
             </span>
-            <div className="relative flex-1 flex items-center">
+            <div className="relative flex-1 flex items-center h-4">
+              <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full bg-amber-500"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              {sponsorBlockEnabled &&
+                duration > 0 &&
+                sponsorSegments.map((seg) => {
+                  const leftPct = Math.max(0, Math.min(100, (seg.segment[0] / duration) * 100));
+                  const widthPct = Math.max(
+                    0.5,
+                    Math.min(100 - leftPct, ((seg.segment[1] - seg.segment[0]) / duration) * 100)
+                  );
+                  return (
+                    <span
+                      key={seg.UUID}
+                      aria-hidden="true"
+                      title={`SponsorBlock: ${seg.category} (${formatTimecode(seg.segment[0])}–${formatTimecode(seg.segment[1])})`}
+                      className="pointer-events-none absolute top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-emerald-400 z-10"
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                    />
+                  );
+                })}
               <input
                 type="range"
                 aria-label="Seek video timeline"
@@ -571,10 +648,7 @@ export function YouTubeStage({
                 value={currentTime}
                 onChange={handleSeekBar}
                 disabled={!duration}
-                className="w-full h-1.5 appearance-none rounded-full bg-zinc-800 accent-amber-500 cursor-pointer disabled:cursor-default"
-                style={{
-                  background: `linear-gradient(to right, #f59e0b ${progressPct}%, #27272a ${progressPct}%)`,
-                }}
+                className="absolute inset-0 z-20 w-full h-full appearance-none bg-transparent accent-amber-500 cursor-pointer disabled:cursor-default"
               />
             </div>
             <span className="font-mono text-xs text-zinc-400 tabular-nums w-12 shrink-0">
@@ -721,6 +795,25 @@ export function YouTubeStage({
 
               <button
                 type="button"
+                onClick={() => setSponsorBlockEnabled((s) => !s)}
+                title={
+                  sponsorBlockEnabled
+                    ? `SponsorBlock auto-skip enabled (${sponsorSegments.length} segments detected)`
+                    : 'SponsorBlock auto-skip disabled'
+                }
+                aria-pressed={sponsorBlockEnabled}
+                aria-label="Toggle SponsorBlock auto-skip"
+                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                  sponsorBlockEnabled
+                    ? 'bg-amber-500/15 text-amber-400'
+                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                }`}
+              >
+                <Scissors className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setAmbientMode((a) => !a)}
                 title={ambientMode ? 'Disable ambient glow' : 'Enable ambient glow'}
                 aria-pressed={ambientMode}
@@ -833,6 +926,20 @@ export function YouTubeStage({
             )}
             <span aria-hidden="true">·</span>
             <span>{privacyMode ? 'No-Cookie Embed' : 'Standard Embed'}</span>
+            {sponsorBlockEnabled && sponsorSegments.length > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-emerald-400 tabular-nums">
+                  {sponsorSegments.length} sponsor {sponsorSegments.length === 1 ? 'segment' : 'segments'} marked
+                </span>
+              </>
+            )}
+            {skipNotice && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-amber-400 font-medium">{skipNotice}</span>
+              </>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -841,24 +948,6 @@ export function YouTubeStage({
             </h1>
 
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleCopyVideoUrl}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 hover:text-zinc-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                {copiedLink ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-amber-400" />
-                    Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    Copy Link
-                  </>
-                )}
-              </button>
-
               <a
                 href={`https://www.youtube.com/watch?v=${activeVideo.videoId}`}
                 target="_blank"
