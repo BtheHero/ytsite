@@ -69,7 +69,7 @@ fun NativeVideoPlayer(
     val context = LocalContext.current
     val dataSourceFactory = remember {
         OkHttpDataSource.Factory(DownloaderImpl.getInstance().client)
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .setUserAgent(DownloaderImpl.USER_AGENT)
     }
 
     val exoPlayer = remember {

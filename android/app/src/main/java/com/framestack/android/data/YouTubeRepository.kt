@@ -260,7 +260,7 @@ class YouTubeRepository(private val context: Context) {
                 ResolvedStreams(
                     title = info.name ?: video.title,
                     author = info.uploaderName ?: video.author,
-                    description = info.description?.content ?: "",
+                    description = info.description?.content() ?: "",
                     durationSeconds = info.duration,
                     qualities = combinedQualities,
                     sponsorSegments = segments

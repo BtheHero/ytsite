@@ -5,6 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+
 android {
     namespace = "com.framestack.android"
     compileSdk = 35
@@ -13,8 +15,28 @@ android {
         applicationId = "com.framestack.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = ciRunNumber
+        versionName = "1.0.$ciRunNumber"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            val customKeystore = System.getenv("ANDROID_KEYSTORE_PATH")
+                ?.let { file(it) }
+                ?.takeIf { it.exists() }
+            if (customKeystore != null) {
+                storeFile = customKeystore
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASS") ?: "android"
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "framestack"
+                keyPassword = System.getenv("ANDROID_KEY_PASS") ?: "android"
+            } else {
+                storeFile = file("framestack-debug.p12")
+                storeType = "PKCS12"
+                storePassword = "android"
+                keyAlias = "framestack"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
@@ -24,9 +46,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -73,7 +97,7 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
 
     // NewPipeExtractor for YouTube channels, playlists, and raw stream resolution
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.5")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.27.1")
 
     // Networking, JSON, and Images
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

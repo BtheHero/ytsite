@@ -27,15 +27,15 @@ class DownloaderImpl private constructor() : Downloader() {
             .url(url)
             .header("User-Agent", USER_AGENT)
 
+        if (url.contains("youtube.com") && !headers.keys.any { it.equals("Cookie", ignoreCase = true) }) {
+            builder.addHeader("Cookie", YOUTUBE_CONSENT_COOKIE)
+        }
+
+        // Preserve every header supplied by NewPipeExtractor (including client-specific User-Agent)
         for ((headerName, headerValues) in headers) {
-            if (headerName.equals("User-Agent", ignoreCase = true)) continue
-            if (headerValues.size > 1) {
-                builder.removeHeader(headerName)
-                for (value in headerValues) {
-                    builder.addHeader(headerName, value)
-                }
-            } else if (headerValues.size == 1) {
-                builder.header(headerName, headerValues[0])
+            builder.removeHeader(headerName)
+            for (value in headerValues) {
+                builder.addHeader(headerName, value)
             }
         }
 
@@ -65,8 +65,11 @@ class DownloaderImpl private constructor() : Downloader() {
     }
 
     companion object {
-        private const val USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0"
+
+        private const val YOUTUBE_CONSENT_COOKIE =
+            "SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg"
 
         @Volatile
         private var instance: DownloaderImpl? = null
