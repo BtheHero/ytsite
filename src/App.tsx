@@ -548,7 +548,7 @@ export default function App() {
       <footer className="border-t border-zinc-800/80 mt-12">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-zinc-500">
           <p>
-            Shortcuts: Space play/pause · J/L seek 10s · N/P next/previous · M mute
+            Shortcuts: Space play/pause · J/L seek 10s · N/P next/previous · M mute · F fullscreen
           </p>
           <div className="flex items-center gap-4">
             <button
