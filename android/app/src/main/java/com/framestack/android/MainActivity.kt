@@ -1,5 +1,8 @@
 package com.framestack.android
 
+import android.app.UiModeManager
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,11 +13,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.framestack.android.ui.MainScreen
 import com.framestack.android.ui.PlayerViewModel
+import com.framestack.android.ui.TvMainScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val uiModeManager = getSystemService(UiModeManager::class.java)
+        val isTv = uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+            packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -27,7 +36,11 @@ class MainActivity : ComponentActivity() {
                 )
             ) {
                 val vm: PlayerViewModel = viewModel()
-                MainScreen(viewModel = vm)
+                if (isTv) {
+                    TvMainScreen(viewModel = vm)
+                } else {
+                    MainScreen(viewModel = vm)
+                }
             }
         }
     }

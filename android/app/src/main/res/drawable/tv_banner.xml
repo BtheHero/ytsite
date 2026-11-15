@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Deep obsidian TV banner backdrop -->
+    <path
+        android:fillColor="#09090B"
+        android:pathData="M0,0h320v180h-320z" />
+
+    <!-- Subtle inner studio frame -->
+    <path
+        android:fillColor="#111114"
+        android:strokeColor="#27272A"
+        android:strokeWidth="2"
+        android:pathData="M18,16h284a8,8 0,0 1,8 8v132a8,8 0,0 1,-8 8h-284a8,8 0,0 1,-8 -8v-132a8,8 0,0 1,8 -8z" />
+
+    <!-- Stacked back frame -->
+    <path
+        android:fillColor="#27272A"
+        android:pathData="M112,38h96a8,8 0,0 1,8 8v68a8,8 0,0 1,-8 8h-96a8,8 0,0 1,-8 -8v-68a8,8 0,0 1,8 -8z" />
+
+    <!-- Amber primary frame -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M104,48h112a10,10 0,0 1,10 10v72a10,10 0,0 1,-10 10h-112a10,10 0,0 1,-10 -10v-72a10,10 0,0 1,10 -10z" />
+
+    <!-- Crisp dark play triangle -->
+    <path
+        android:fillColor="#09090B"
+        android:pathData="M148,74l32,20l-32,20z" />
+
+    <!-- Bottom accent rule -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M116,150h88a2,2 0,0 1,2 2v2a2,2 0,0 1,-2 2h-88a2,2 0,0 1,-2 -2v-2a2,2 0,0 1,2 -2z" />
+</vector>

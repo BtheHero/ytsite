@@ -1,6 +1,9 @@
 package com.framestack.android.ui
 
 import android.app.Application
+import android.app.UiModeManager
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.framestack.android.data.QualityOption
@@ -36,6 +39,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val repository = YouTubeRepository(application)
 
+    private val isTvDevice: Boolean = run {
+        val uiModeManager = application.getSystemService(UiModeManager::class.java)
+        uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+            application.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    }
+
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
@@ -45,16 +54,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         initialSources.firstOrNull()?.let { selectSource(it) }
     }
 
-    fun selectSource(source: VideoSource) {
+    fun selectSource(source: VideoSource, autoPlay: Boolean = !isTvDevice) {
         _uiState.update {
             it.copy(
                 activeSourceId = source.id,
                 loadingQueue = true,
                 queueError = null,
                 queue = emptyList(),
-                activeVideo = null,
-                resolvedStreams = null,
-                selectedQuality = null
+                activeVideo = if (autoPlay) null else it.activeVideo,
+                resolvedStreams = if (autoPlay) null else it.resolvedStreams,
+                selectedQuality = if (autoPlay) null else it.selectedQuality
             )
         }
         viewModelScope.launch {
@@ -67,7 +76,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             queueError = if (videos.isEmpty()) "No videos found in this feed." else null
                         )
                     }
-                    videos.firstOrNull()?.let { playVideo(it) }
+                    if (autoPlay) {
+                        videos.firstOrNull()?.let { playVideo(it) }
+                    }
                 }
                 .onFailure { err ->
                     _uiState.update {
