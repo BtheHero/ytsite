@@ -10,6 +10,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Login
+import androidx.compose.material.icons.automirrored.rounded.MenuOpen
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -90,7 +92,7 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                     .glassPanel(shape = RoundedCornerShape(10.dp), highlighted = !showSideMenu)
                             ) {
                                 Icon(
-                                    imageVector = if (showSideMenu) Icons.Rounded.MenuOpen else Icons.Rounded.Menu,
+                                    imageVector = if (showSideMenu) Icons.AutoMirrored.Rounded.MenuOpen else Icons.Rounded.Menu,
                                     contentDescription = if (showSideMenu) "Hide menu" else "Show menu",
                                     tint = if (showSideMenu) GlassColors.TextPrimary else GlassColors.AccentAmberSoft,
                                     modifier = Modifier.size(18.dp)
@@ -111,7 +113,7 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.Rounded.Login,
+                                    imageVector = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.AutoMirrored.Rounded.Login,
                                     contentDescription = null,
                                     modifier = Modifier.size(14.dp)
                                 )

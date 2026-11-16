@@ -16,16 +16,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Login
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.Login
-import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -53,7 +54,9 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.URLDecoder
+import java.util.Collections
 
+@OptIn(ExperimentalComposeUiApi::class)
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun YouTubeSignInDialog(
@@ -315,7 +318,7 @@ fun YouTubeSignInDialog(
                     onClick = { mode = "browser"; statusMessage = null },
                     label = { Text("Browser + 2FA", fontSize = 12.sp) },
                     leadingIcon = {
-                        Icon(Icons.Rounded.Login, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Icon(Icons.AutoMirrored.Rounded.Login, contentDescription = null, modifier = Modifier.size(15.dp))
                     },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = Color(0x33F59E0B),
@@ -357,7 +360,7 @@ fun YouTubeSignInDialog(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFCA5A5)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        Icon(Icons.Rounded.Logout, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Sign Out", fontSize = 12.sp)
                     }
@@ -741,9 +744,9 @@ fun YouTubeSignInDialog(
 private fun findLocalIpv4Address(): String? {
     return runCatching {
         val interfaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching null
-        for (iface in interfaces.toList()) {
+        for (iface in Collections.list(interfaces)) {
             if (!iface.isUp || iface.isLoopback) continue
-            for (addr in iface.inetAddresses.toList()) {
+            for (addr in Collections.list(iface.inetAddresses)) {
                 if (addr is Inet4Address && !addr.isLoopbackAddress && addr.isSiteLocalAddress) {
                     return@runCatching addr.hostAddress
                 }

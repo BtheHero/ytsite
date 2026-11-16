@@ -14,6 +14,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Login
+import androidx.compose.material.icons.automirrored.rounded.MenuOpen
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -223,7 +225,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
 
                     TvSidebarButton(
                         label = if (state.isSignedIn) "YouTube Signed In" else "YouTube Sign-In",
-                        icon = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.Rounded.Login,
+                        icon = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.AutoMirrored.Rounded.Login,
                         isPrimary = false,
                         onClick = { showSignInDialog = true }
                     )
@@ -259,7 +261,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                     ) {
                         TvActionButton(
                             label = if (showSideMenu) "Hide Menu" else "Menu",
-                            icon = if (showSideMenu) Icons.Rounded.MenuOpen else Icons.Rounded.Menu,
+                            icon = if (showSideMenu) Icons.AutoMirrored.Rounded.MenuOpen else Icons.Rounded.Menu,
                             focusRequester = menuToggleFocusRequester,
                             onClick = { showSideMenu = !showSideMenu }
                         )

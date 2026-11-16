@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Login
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -449,7 +450,7 @@ fun TvVideoPlayer(
                         if (isLoginRequired) {
                             TvActionButton(
                                 label = "Sign in with YouTube",
-                                icon = Icons.Rounded.Login,
+                                icon = Icons.AutoMirrored.Rounded.Login,
                                 highlighted = true,
                                 focusRequester = retryFocusRequester,
                                 onClick = onOpenSignIn
@@ -582,108 +583,107 @@ fun TvVideoPlayer(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                        // D-pad Focusable Glass Transport & Quick-Settings Row
+                    // D-pad Focusable Glass Transport & Quick-Settings Row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                TvActionButton(
-                                    label = "Prev",
-                                    icon = Icons.Rounded.SkipPrevious,
-                                    onClick = {
-                                        onPrevious()
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "-10s",
-                                    icon = Icons.Rounded.Replay10,
-                                    onClick = {
-                                        exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = if (isPlaying) "Pause" else "Play",
-                                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    highlighted = true,
-                                    focusRequester = playPauseFocusRequester,
-                                    onClick = {
-                                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "+10s",
-                                    icon = Icons.Rounded.Forward10,
-                                    onClick = {
-                                        exoPlayer.seekTo(exoPlayer.currentPosition + 10_000L)
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "Next",
-                                    icon = Icons.Rounded.SkipNext,
-                                    onClick = {
-                                        onNext()
-                                        bumpOsd()
-                                    }
-                                )
-                            }
+                            TvActionButton(
+                                label = "Prev",
+                                icon = Icons.Rounded.SkipPrevious,
+                                onClick = {
+                                    onPrevious()
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "-10s",
+                                icon = Icons.Rounded.Replay10,
+                                onClick = {
+                                    exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = if (isPlaying) "Pause" else "Play",
+                                icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                highlighted = true,
+                                focusRequester = playPauseFocusRequester,
+                                onClick = {
+                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "+10s",
+                                icon = Icons.Rounded.Forward10,
+                                onClick = {
+                                    exoPlayer.seekTo(exoPlayer.currentPosition + 10_000L)
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "Next",
+                                icon = Icons.Rounded.SkipNext,
+                                onClick = {
+                                    onNext()
+                                    bumpOsd()
+                                }
+                            )
+                        }
 
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                TvActionButton(
-                                    label = quality?.let { formatResolutionBadge(it.height, it.label) } ?: "Quality",
-                                    icon = Icons.Rounded.HighQuality,
-                                    onClick = {
-                                        showQualityDialog = true
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "${playbackSpeed}x",
-                                    icon = Icons.Rounded.Speed,
-                                    onClick = {
-                                        showSpeedDialog = true
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "Sponsor",
-                                    icon = Icons.Rounded.ContentCut,
-                                    activeTint = if (sponsorBlockEnabled) GlassColors.AccentEmerald else null,
-                                    onClick = {
-                                        onToggleSponsorBlock()
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "Shuffle",
-                                    icon = Icons.Rounded.Shuffle,
-                                    activeTint = if (shuffle) GlassColors.AccentAmber else null,
-                                    onClick = {
-                                        onToggleShuffle()
-                                        bumpOsd()
-                                    }
-                                )
-                                TvActionButton(
-                                    label = "Loop",
-                                    icon = Icons.Rounded.Repeat,
-                                    activeTint = if (loopQueue) GlassColors.AccentAmber else null,
-                                    onClick = {
-                                        onToggleLoop()
-                                        bumpOsd()
-                                    }
-                                )
-                            }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TvActionButton(
+                                label = quality?.let { formatResolutionBadge(it.height, it.label) } ?: "Quality",
+                                icon = Icons.Rounded.HighQuality,
+                                onClick = {
+                                    showQualityDialog = true
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "${playbackSpeed}x",
+                                icon = Icons.Rounded.Speed,
+                                onClick = {
+                                    showSpeedDialog = true
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "Sponsor",
+                                icon = Icons.Rounded.ContentCut,
+                                activeTint = if (sponsorBlockEnabled) GlassColors.AccentEmerald else null,
+                                onClick = {
+                                    onToggleSponsorBlock()
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "Shuffle",
+                                icon = Icons.Rounded.Shuffle,
+                                activeTint = if (shuffle) GlassColors.AccentAmber else null,
+                                onClick = {
+                                    onToggleShuffle()
+                                    bumpOsd()
+                                }
+                            )
+                            TvActionButton(
+                                label = "Loop",
+                                icon = Icons.Rounded.Repeat,
+                                activeTint = if (loopQueue) GlassColors.AccentAmber else null,
+                                onClick = {
+                                    onToggleLoop()
+                                    bumpOsd()
+                                }
+                            )
                         }
                     }
                 }

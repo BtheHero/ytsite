@@ -80,15 +80,16 @@ fun GlassBackdrop(
                     startY = 0f,
                     endY = size.height
                 )
+                val maxDim = maxOf(size.width, size.height)
                 val amberGlow = Brush.radialGradient(
                     colors = listOf(Color(0x20F59E0B), Color.Transparent),
                     center = Offset(size.width * 0.14f, size.height * 0.10f),
-                    radius = (size.maxDimension * 0.55f).coerceAtLeast(300f)
+                    radius = (maxDim * 0.55f).coerceAtLeast(300f)
                 )
                 val sapphireGlow = Brush.radialGradient(
                     colors = listOf(Color(0x1A38BDF8), Color.Transparent),
                     center = Offset(size.width * 0.88f, size.height * 0.85f),
-                    radius = (size.maxDimension * 0.65f).coerceAtLeast(360f)
+                    radius = (maxDim * 0.65f).coerceAtLeast(360f)
                 )
                 onDrawBehind {
                     drawRect(brush = baseBrush)
