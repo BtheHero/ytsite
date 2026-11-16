@@ -147,9 +147,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             repository.resolveVideoStreams(video, forceRefresh = forceRefresh)
                 .onSuccess { resolved ->
                     if (_uiState.value.activeVideo?.videoId != video.videoId) return@onSuccess
-                    val preferredQuality =
-                        resolved.qualities.firstOrNull { it.height <= 1080 }
-                            ?: resolved.qualities.firstOrNull()
+                    val preferredQuality = resolved.qualities.firstOrNull()
                     _uiState.update {
                         it.copy(
                             resolvedStreams = resolved,

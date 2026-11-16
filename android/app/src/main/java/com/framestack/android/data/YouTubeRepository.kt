@@ -1,6 +1,9 @@
 package com.framestack.android.data
 
 import android.content.Context
+import android.media.MediaCodecInfo
+import android.media.MediaCodecList
+import android.os.Build
 import android.util.Xml
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -38,6 +41,7 @@ class YouTubeRepository(private val context: Context) {
         val clientName: String,
         val clientVersion: String,
         val clientIdHeader: String,
+        val endpointUrl: String,
         val userAgent: String,
         val deviceMake: String? = null,
         val deviceModel: String? = null,
@@ -46,6 +50,12 @@ class YouTubeRepository(private val context: Context) {
         val androidSdkVersion: Int? = null,
         val needsSignatureTimestamp: Boolean = false,
         val sendCookies: Boolean = false
+    )
+
+    private data class VideoCandidate(
+        val mime: String,
+        val url: String,
+        val fps: Int = 30
     )
 
     private val feedCache = ConcurrentHashMap<String, CachedFeed>()
@@ -58,6 +68,14 @@ class YouTubeRepository(private val context: Context) {
     private var cachedVisitorData: String? = null
     @Volatile
     private var visitorDataFetchedAtMs: Long = 0L
+
+    private val hasHardwareAv1: Boolean by lazy {
+        hasHardwareDecoder("video/av01")
+    }
+
+    private val hasHardwareVp9: Boolean by lazy {
+        hasHardwareDecoder("video/x-vnd.on2.vp9")
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -372,9 +390,12 @@ class YouTubeRepository(private val context: Context) {
                 .filter { it.isUrl && !it.content.isNullOrBlank() && it.height > 0 }
                 .groupBy { it.height }
                 .mapNotNull { (height, streams) ->
-                    val picked = streams.firstOrNull {
-                        it.format?.name?.contains("MPEG_4", ignoreCase = true) == true
-                    } ?: streams.firstOrNull()
+                    // Score by hardware decoder safety so 4K never picks software AV1
+                    val picked = streams.minByOrNull { stream ->
+                        val codec = stream.codec.orEmpty().lowercase()
+                        val fmtName = stream.format?.name.orEmpty().lowercase()
+                        codecPriority(codec, fmtName, stream.fps)
+                    }
                     picked?.let {
                         QualityOption(
                             label = "${height}p",
@@ -469,11 +490,12 @@ class YouTubeRepository(private val context: Context) {
         }
 
         val reqBuilder = Request.Builder()
-            .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            .url(client.endpointUrl)
             .header("Content-Type", "application/json")
             .header("User-Agent", client.userAgent)
             .header("X-YouTube-Client-Name", client.clientIdHeader)
             .header("X-YouTube-Client-Version", client.clientVersion)
+            .header("X-Goog-Api-Format-Version", "2")
 
         if (client.sendCookies && authManager.isSignedIn()) {
             authManager.buildAuthHeaders().forEach { (k, v) ->
@@ -520,7 +542,7 @@ class YouTubeRepository(private val context: Context) {
         val muxedFormats = streamingData.optJSONArray("formats") ?: JSONArray()
 
         val audioStreams = mutableListOf<Pair<Int, String>>()
-        val videoOnlyByHeight = LinkedHashMap<Int, MutableList<Pair<String, String>>>()
+        val videoOnlyByHeight = LinkedHashMap<Int, MutableList<VideoCandidate>>()
 
         for (i in 0 until adaptiveFormats.length()) {
             val fmt = adaptiveFormats.optJSONObject(i) ?: continue
@@ -532,8 +554,10 @@ class YouTubeRepository(private val context: Context) {
                 audioStreams.add(bitrate to resolvedUrl)
             } else if (mime.startsWith("video/", ignoreCase = true)) {
                 val height = fmt.optInt("height", 0)
+                val fps = fmt.optInt("fps", 30)
                 if (height > 0) {
-                    videoOnlyByHeight.getOrPut(height) { mutableListOf() }.add(mime to resolvedUrl)
+                    videoOnlyByHeight.getOrPut(height) { mutableListOf() }
+                        .add(VideoCandidate(mime = mime, url = resolvedUrl, fps = fps))
                 }
             }
         }
@@ -542,17 +566,14 @@ class YouTubeRepository(private val context: Context) {
 
         val adaptiveQualities = if (!bestAudioUrl.isNullOrBlank()) {
             videoOnlyByHeight.mapNotNull { (height, candidates) ->
-                val picked = candidates.firstOrNull { (mime, _) ->
-                    mime.contains("mp4", ignoreCase = true) && mime.contains("avc1", ignoreCase = true)
-                } ?: candidates.firstOrNull { (mime, _) ->
-                    mime.contains("mp4", ignoreCase = true)
-                } ?: candidates.firstOrNull()
-
-                picked?.let { (_, streamUrl) ->
+                val picked = candidates.minByOrNull { cand ->
+                    codecPriority(cand.mime.lowercase(), cand.mime.lowercase(), cand.fps)
+                }
+                picked?.let {
                     QualityOption(
                         label = "${height}p",
                         height = height,
-                        videoUrl = streamUrl,
+                        videoUrl = it.url,
                         audioUrl = bestAudioUrl,
                         isMuxed = false,
                         userAgent = client.userAgent
@@ -612,6 +633,49 @@ class YouTubeRepository(private val context: Context) {
             qualities = combinedQualities,
             sponsorSegments = sponsorSegments
         )
+    }
+
+    /**
+     * Lower score = better hardware-accelerated playback without UI/decoder freeze.
+     * Critically avoids software AV1 (av01) at 1440p/4K unless device has hardware AV1.
+     */
+    private fun codecPriority(codecOrMime: String, containerHint: String, fps: Int): Int {
+        val isAvc = codecOrMime.contains("avc1")
+        val isVp9Sdr = codecOrMime.contains("vp09.00") ||
+            (codecOrMime.contains("vp9") && !codecOrMime.contains("vp09.02"))
+        val isVp9Hdr = codecOrMime.contains("vp09.02") || codecOrMime.contains("vp09")
+        val isAv1 = codecOrMime.contains("av01")
+
+        val baseTier = when {
+            isAvc -> 0
+            isVp9Sdr && hasHardwareVp9 -> 10
+            isVp9Sdr -> 20
+            isVp9Hdr && hasHardwareVp9 -> 30
+            isAv1 && hasHardwareAv1 -> 35
+            containerHint.contains("webm") -> 40
+            isAv1 -> 90 // Software 4K AV1 freezes most Android devices
+            else -> 60
+        }
+        val fpsPenalty = if (fps > 45) 3 else 0
+        return baseTier + fpsPenalty
+    }
+
+    private fun hasHardwareDecoder(mimeType: String): Boolean {
+        return runCatching {
+            val list = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            list.any { info ->
+                if (info.isEncoder) return@any false
+                if (!info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }) return@any false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    info.isHardwareAccelerated && !info.isSoftwareOnly
+                } else {
+                    val name = info.name.lowercase()
+                    !name.startsWith("omx.google.") &&
+                        !name.startsWith("c2.android.") &&
+                        !name.contains("sw")
+                }
+            }
+        }.getOrDefault(false)
     }
 
     private fun resolveFormatUrl(
@@ -848,10 +912,16 @@ class YouTubeRepository(private val context: Context) {
     }
 
     companion object {
+        private const val YOUTUBEI_GAPIS_PLAYER =
+            "https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false"
+        private const val YOUTUBEI_WEB_PLAYER =
+            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+
         private val CLIENT_ANDROID_VR = InnertubeClient(
             clientName = "ANDROID_VR",
             clientVersion = "1.61.48",
             clientIdHeader = "28",
+            endpointUrl = YOUTUBEI_GAPIS_PLAYER,
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             deviceMake = "Oculus",
             deviceModel = "Quest 3",
@@ -866,6 +936,7 @@ class YouTubeRepository(private val context: Context) {
             clientName = "IOS",
             clientVersion = "20.10.4",
             clientIdHeader = "5",
+            endpointUrl = YOUTUBEI_GAPIS_PLAYER,
             userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
             deviceMake = "Apple",
             deviceModel = "iPhone16,2",
@@ -879,6 +950,7 @@ class YouTubeRepository(private val context: Context) {
             clientName = "ANDROID",
             clientVersion = "20.10.38",
             clientIdHeader = "3",
+            endpointUrl = YOUTUBEI_GAPIS_PLAYER,
             userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
             osName = "Android",
             osVersion = "14",
@@ -891,6 +963,7 @@ class YouTubeRepository(private val context: Context) {
             clientName = "TVHTML5",
             clientVersion = "7.20250312.16.00",
             clientIdHeader = "7",
+            endpointUrl = YOUTUBEI_WEB_PLAYER,
             userAgent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
             needsSignatureTimestamp = true,
             sendCookies = true
@@ -900,6 +973,7 @@ class YouTubeRepository(private val context: Context) {
             clientName = "WEB",
             clientVersion = "2.20250312.04.00",
             clientIdHeader = "1",
+            endpointUrl = YOUTUBEI_WEB_PLAYER,
             userAgent = DownloaderImpl.USER_AGENT,
             needsSignatureTimestamp = true,
             sendCookies = true

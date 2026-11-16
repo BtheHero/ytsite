@@ -1,7 +1,12 @@
 package com.framestack.android.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -48,6 +53,7 @@ import kotlinx.coroutines.delay
 fun TvMainScreen(viewModel: PlayerViewModel) {
     val state by viewModel.uiState.collectAsState()
     var isWatchingPlayer by rememberSaveable { mutableStateOf(false) }
+    var showSideMenu by rememberSaveable { mutableStateOf(true) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showSignInDialog by remember { mutableStateOf(false) }
     var queueQuery by remember { mutableStateOf("") }
@@ -67,6 +73,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
     if (isWatchingPlayer) {
         val activeVideo = state.activeVideo
         TvVideoPlayer(
+            videoId = activeVideo?.videoId,
             title = state.resolvedStreams?.title ?: activeVideo?.title ?: "FrameStack TV",
             author = state.resolvedStreams?.author ?: activeVideo?.author ?: "",
             quality = state.selectedQuality,
@@ -113,314 +120,336 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
     }
 
     val addSourceFocusRequester = remember { FocusRequester() }
+    val menuToggleFocusRequester = remember { FocusRequester() }
+
     LaunchedEffect(Unit) {
         delay(80L)
-        runCatching { addSourceFocusRequester.requestFocus() }
+        runCatching {
+            if (showSideMenu) addSourceFocusRequester.requestFocus()
+            else menuToggleFocusRequester.requestFocus()
+        }
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF09090B))
-            .padding(24.dp)
-    ) {
-        // Left 10-foot TV Navigation Rail
-        Column(
+    GlassBackdrop {
+        Row(
             modifier = Modifier
-                .width(276.dp)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF111114))
-                .border(1.dp, Color(0xFF27272A), RoundedCornerShape(18.dp))
-                .padding(18.dp)
+                .fillMaxSize()
+                .padding(24.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+            // Hideable 10-foot Frosted Glass Navigation Rail
+            AnimatedVisibility(
+                visible = showSideMenu,
+                enter = expandHorizontally() + fadeIn(),
+                exit = shrinkHorizontally() + fadeOut()
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(Color(0xFF1F1F26), Color(0xFF0E0E12))
-                                )
-                            )
-                            .border(1.dp, Color(0x44F59E0B), RoundedCornerShape(9.dp)),
-                        contentAlignment = Alignment.Center
+                Column(
+                    modifier = Modifier
+                        .width(276.dp)
+                        .fillMaxHeight()
+                        .padding(end = 22.dp)
+                        .glassPanel(shape = RoundedCornerShape(22.dp), elevated = true)
+                        .padding(18.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                            contentDescription = "FrameStack Logo",
-                            tint = Color.Unspecified,
-                            modifier = Modifier.size(38.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "FrameStack",
-                        color = Color(0xFFF4F4F5),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Surface(
-                    color = Color(0x33F59E0B),
-                    shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(1.dp, Color(0xFFF59E0B))
-                ) {
-                    Text(
-                        text = "TV",
-                        color = Color(0xFFF59E0B),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            TvSidebarButton(
-                label = "Add Source",
-                icon = Icons.Rounded.Add,
-                isPrimary = true,
-                focusRequester = addSourceFocusRequester,
-                onClick = { showAddDialog = true }
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Text(
-                text = "CHANNELS & PLAYLISTS",
-                color = Color(0xFF71717A),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 1.sp
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                items(state.sources, key = { it.id }) { source ->
-                    TvSourceNavItem(
-                        source = source,
-                        isActive = source.id == activeSource?.id,
-                        onClick = { viewModel.selectSource(source, autoPlay = false) }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TvSidebarButton(
-                label = if (state.isSignedIn) "YouTube Signed In" else "YouTube Sign-In",
-                icon = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.Rounded.Login,
-                isPrimary = false,
-                onClick = { showSignInDialog = true }
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            TvSidebarButton(
-                label = "Reset Defaults",
-                icon = Icons.Rounded.RestartAlt,
-                isPrimary = false,
-                onClick = { viewModel.resetDefaults() }
-            )
-        }
-
-        // Right 10-foot Content Grid
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .padding(start = 24.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = activeSource?.title ?: "Select a Source",
-                        color = Color(0xFFF4F4F5),
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = buildString {
-                            activeSource?.let {
-                                append(it.category)
-                                append(" • ")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .glassPanel(shape = RoundedCornerShape(10.dp), highlighted = true),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                                    contentDescription = "FrameStack Logo",
+                                    tint = Color.Unspecified,
+                                    modifier = Modifier.size(38.dp)
+                                )
                             }
-                            append("${filteredQueue.size} videos")
-                        },
-                        color = Color(0xFFA1A1AA),
-                        fontSize = 14.sp
-                    )
-                }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (state.activeVideo != null) {
-                        TvActionButton(
-                            label = "Now Playing",
-                            icon = Icons.Rounded.LiveTv,
-                            highlighted = true,
-                            onClick = { isWatchingPlayer = true }
-                        )
-                    } else if (filteredQueue.isNotEmpty()) {
-                        TvActionButton(
-                            label = "Play All",
-                            icon = Icons.Rounded.PlayArrow,
-                            highlighted = true,
-                            onClick = {
-                                filteredQueue.firstOrNull()?.let { first ->
-                                    viewModel.playVideo(first)
-                                    isWatchingPlayer = true
-                                }
-                            }
-                        )
-                    }
-
-                    if (activeSource != null) {
-                        TvActionButton(
-                            label = "Refresh",
-                            icon = Icons.Rounded.Refresh,
-                            onClick = { viewModel.selectSource(activeSource, autoPlay = false, forceRefresh = true) }
-                        )
-
-                        if (state.sources.size > 1) {
-                            TvActionButton(
-                                label = "Remove",
-                                icon = Icons.Rounded.DeleteOutline,
-                                onClick = { viewModel.removeSource(activeSource.id) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            OutlinedTextField(
-                value = queueQuery,
-                onValueChange = { queueQuery = it },
-                placeholder = { Text("Filter videos in queue...", color = Color(0xFF71717A)) },
-                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF71717A)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFFF59E0B),
-                    unfocusedBorderColor = Color(0xFF27272A),
-                    focusedTextColor = Color(0xFFF4F4F5),
-                    unfocusedTextColor = Color(0xFFF4F4F5),
-                    focusedContainerColor = Color(0xFF111114),
-                    unfocusedContainerColor = Color(0xFF111114)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            when {
-                state.loadingQueue -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(
-                                color = Color(0xFFF59E0B),
-                                modifier = Modifier.size(42.dp)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Loading channel & playlist feed...",
-                                color = Color(0xFFA1A1AA),
-                                fontSize = 15.sp
+                                text = "FrameStack",
+                                color = GlassColors.TextPrimary,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                    }
-                }
-
-                !state.queueError.isNullOrBlank() -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xFF111114))
-                                .border(1.dp, Color(0xFF27272A), RoundedCornerShape(16.dp))
-                                .padding(28.dp)
+                        Surface(
+                            color = Color(0x33F59E0B),
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, GlassColors.AccentAmber)
                         ) {
                             Text(
-                                text = state.queueError ?: "Could not load feed.",
-                                color = Color(0xFFFCA5A5),
-                                fontSize = 16.sp
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            TvActionButton(
-                                label = "Retry",
-                                icon = Icons.Rounded.Refresh,
-                                highlighted = true,
-                                onClick = {
-                                    activeSource?.let { viewModel.selectSource(it, autoPlay = false, forceRefresh = true) }
-                                }
+                                text = "TV",
+                                color = GlassColors.AccentAmberSoft,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
                     }
-                }
 
-                filteredQueue.isEmpty() -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "No videos match your filter.",
-                                color = Color(0xFFA1A1AA),
-                                fontSize = 16.sp
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    TvSidebarButton(
+                        label = "Add Source",
+                        icon = Icons.Rounded.Add,
+                        isPrimary = true,
+                        focusRequester = addSourceFocusRequester,
+                        onClick = { showAddDialog = true }
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Text(
+                        text = "CHANNELS & PLAYLISTS",
+                        color = GlassColors.TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        items(state.sources, key = { it.id }) { source ->
+                            TvSourceNavItem(
+                                source = source,
+                                isActive = source.id == activeSource?.id,
+                                onClick = { viewModel.selectSource(source, autoPlay = false) }
                             )
-                            if (queueQuery.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(12.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    TvSidebarButton(
+                        label = if (state.isSignedIn) "YouTube Signed In" else "YouTube Sign-In",
+                        icon = if (state.isSignedIn) Icons.Rounded.VerifiedUser else Icons.Rounded.Login,
+                        isPrimary = false,
+                        onClick = { showSignInDialog = true }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    TvSidebarButton(
+                        label = "Reset Defaults",
+                        icon = Icons.Rounded.RestartAlt,
+                        isPrimary = false,
+                        onClick = { viewModel.resetDefaults() }
+                    )
+                }
+            }
+
+            // Right 10-foot Frosted Glass Content Grid
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassPanel(shape = RoundedCornerShape(18.dp))
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        TvActionButton(
+                            label = if (showSideMenu) "Hide Menu" else "Menu",
+                            icon = if (showSideMenu) Icons.Rounded.MenuOpen else Icons.Rounded.Menu,
+                            focusRequester = menuToggleFocusRequester,
+                            onClick = { showSideMenu = !showSideMenu }
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = activeSource?.title ?: "Select a Source",
+                                color = GlassColors.TextPrimary,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = buildString {
+                                    activeSource?.let {
+                                        append(it.category)
+                                        append(" • ")
+                                    }
+                                    append("${filteredQueue.size} videos")
+                                },
+                                color = GlassColors.TextSecondary,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (state.activeVideo != null) {
+                            TvActionButton(
+                                label = "Now Playing",
+                                icon = Icons.Rounded.LiveTv,
+                                highlighted = true,
+                                onClick = { isWatchingPlayer = true }
+                            )
+                        } else if (filteredQueue.isNotEmpty()) {
+                            TvActionButton(
+                                label = "Play All",
+                                icon = Icons.Rounded.PlayArrow,
+                                highlighted = true,
+                                onClick = {
+                                    filteredQueue.firstOrNull()?.let { first ->
+                                        viewModel.playVideo(first)
+                                        isWatchingPlayer = true
+                                    }
+                                }
+                            )
+                        }
+
+                        if (activeSource != null) {
+                            TvActionButton(
+                                label = "Refresh",
+                                icon = Icons.Rounded.Refresh,
+                                onClick = { viewModel.selectSource(activeSource, autoPlay = false, forceRefresh = true) }
+                            )
+
+                            if (state.sources.size > 1) {
                                 TvActionButton(
-                                    label = "Clear Filter",
-                                    icon = Icons.Rounded.Clear,
-                                    onClick = { queueQuery = "" }
+                                    label = "Remove",
+                                    icon = Icons.Rounded.DeleteOutline,
+                                    onClick = { viewModel.removeSource(activeSource.id) }
                                 )
                             }
                         }
                     }
                 }
 
-                else -> {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        horizontalArrangement = Arrangement.spacedBy(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
-                        contentPadding = PaddingValues(6.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(filteredQueue, key = { it.videoId }) { video ->
-                            TvVideoCard(
-                                video = video,
-                                isPlayingVideo = video.videoId == state.activeVideo?.videoId,
-                                onClick = {
-                                    viewModel.playVideo(video)
-                                    isWatchingPlayer = true
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = queueQuery,
+                    onValueChange = { queueQuery = it },
+                    placeholder = { Text("Filter videos in queue...", color = GlassColors.TextMuted) },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = GlassColors.TextMuted) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = GlassColors.AccentAmber,
+                        unfocusedBorderColor = Color(0x28FFFFFF),
+                        focusedTextColor = GlassColors.TextPrimary,
+                        unfocusedTextColor = GlassColors.TextPrimary,
+                        focusedContainerColor = GlassColors.GlassSurface,
+                        unfocusedContainerColor = GlassColors.GlassSurface
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                when {
+                    state.loadingQueue -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .glassPanel(shape = RoundedCornerShape(18.dp))
+                                    .padding(24.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    color = GlassColors.AccentAmber,
+                                    modifier = Modifier.size(42.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Loading channel & playlist feed...",
+                                    color = GlassColors.TextSecondary,
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                    }
+
+                    !state.queueError.isNullOrBlank() -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .glassPanel(shape = RoundedCornerShape(18.dp), elevated = true)
+                                    .padding(28.dp)
+                            ) {
+                                Text(
+                                    text = state.queueError ?: "Could not load feed.",
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 16.sp
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                TvActionButton(
+                                    label = "Retry",
+                                    icon = Icons.Rounded.Refresh,
+                                    highlighted = true,
+                                    onClick = {
+                                        activeSource?.let { viewModel.selectSource(it, autoPlay = false, forceRefresh = true) }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    filteredQueue.isEmpty() -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "No videos match your filter.",
+                                    color = GlassColors.TextSecondary,
+                                    fontSize = 16.sp
+                                )
+                                if (queueQuery.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    TvActionButton(
+                                        label = "Clear Filter",
+                                        icon = Icons.Rounded.Clear,
+                                        onClick = { queueQuery = "" }
+                                    )
                                 }
-                            )
+                            }
+                        }
+                    }
+
+                    else -> {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(if (showSideMenu) 3 else 4),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(18.dp),
+                            contentPadding = PaddingValues(6.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(filteredQueue, key = { it.videoId }) { video ->
+                                TvVideoCard(
+                                    video = video,
+                                    isPlayingVideo = video.videoId == state.activeVideo?.videoId,
+                                    onClick = {
+                                        viewModel.playVideo(video)
+                                        isWatchingPlayer = true
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -473,21 +502,21 @@ private fun TvSidebarButton(
     val scale by animateFloatAsState(if (focused) 1.04f else 1f)
     val bg by animateColorAsState(
         when {
-            focused -> Color(0xFFF59E0B)
-            isPrimary -> Color(0x26F59E0B)
-            else -> Color(0xFF18181B)
+            focused -> GlassColors.AccentAmber
+            isPrimary -> Color(0x36F59E0B)
+            else -> Color(0x66171C2B)
         }
     )
     val fg = when {
         focused -> Color(0xFF09090B)
-        isPrimary -> Color(0xFFF59E0B)
-        else -> Color(0xFFE4E4E7)
+        isPrimary -> GlassColors.AccentAmberSoft
+        else -> GlassColors.TextPrimary
     }
     val border by animateColorAsState(
         when {
-            focused -> Color(0xFFFDE68A)
-            isPrimary -> Color(0xFFF59E0B)
-            else -> Color(0xFF27272A)
+            focused -> GlassColors.AccentAmberSoft
+            isPrimary -> GlassColors.AccentAmber
+            else -> Color(0x2EFFFFFF)
         }
     )
 
@@ -497,9 +526,9 @@ private fun TvSidebarButton(
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .scale(scale)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(bg)
-            .border(if (focused) 2.dp else 1.dp, border, RoundedCornerShape(10.dp))
+            .border(if (focused) 2.dp else 1.dp, border, RoundedCornerShape(12.dp))
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp)
@@ -527,16 +556,16 @@ private fun TvSourceNavItem(
     val scale by animateFloatAsState(if (focused) 1.03f else 1f)
     val bg by animateColorAsState(
         when {
-            focused -> Color(0xFF27272A)
-            isActive -> Color(0x22F59E0B)
-            else -> Color(0xFF18181B)
+            focused -> Color(0xAA242B3E)
+            isActive -> Color(0x33F59E0B)
+            else -> Color(0x66131722)
         }
     )
     val border by animateColorAsState(
         when {
-            focused -> Color(0xFFF59E0B)
+            focused -> GlassColors.AccentAmber
             isActive -> Color(0x99F59E0B)
-            else -> Color(0xFF27272A)
+            else -> Color(0x24FFFFFF)
         }
     )
 
@@ -545,12 +574,12 @@ private fun TvSourceNavItem(
         modifier = Modifier
             .fillMaxWidth()
             .scale(scale)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = border,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
@@ -561,13 +590,13 @@ private fun TvSourceNavItem(
                 .width(4.dp)
                 .height(26.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(if (isActive || focused) Color(0xFFF59E0B) else Color(0xFF3F3F46))
+                .background(if (isActive || focused) GlassColors.AccentAmber else Color(0x44FFFFFF))
         )
         Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = source.title,
-                color = Color(0xFFF4F4F5),
+                color = GlassColors.TextPrimary,
                 fontSize = 14.sp,
                 fontWeight = if (isActive || focused) FontWeight.Bold else FontWeight.Medium,
                 maxLines = 1,
@@ -575,7 +604,7 @@ private fun TvSourceNavItem(
             )
             Text(
                 text = "${source.category} • ${source.type.uppercase()}",
-                color = if (isActive) Color(0xFFF59E0B) else Color(0xFF71717A),
+                color = if (isActive) GlassColors.AccentAmber else GlassColors.TextMuted,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 1
@@ -593,12 +622,12 @@ private fun TvVideoCard(
     var focused by remember { mutableStateOf(false) }
 
     val scale by animateFloatAsState(if (focused) 1.05f else 1f)
-    val cardBg by animateColorAsState(if (focused) Color(0xFF1C1C22) else Color(0xFF111114))
+    val cardBg by animateColorAsState(if (focused) Color(0xCC1E2538) else GlassColors.GlassSurface)
     val border by animateColorAsState(
         when {
-            focused -> Color(0xFFF59E0B)
-            isPlayingVideo -> Color(0x88F59E0B)
-            else -> Color(0xFF27272A)
+            focused -> GlassColors.AccentAmber
+            isPlayingVideo -> Color(0x99F59E0B)
+            else -> Color(0x2EFFFFFF)
         }
     )
 
@@ -606,12 +635,12 @@ private fun TvVideoCard(
         modifier = Modifier
             .fillMaxWidth()
             .scale(scale)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(cardBg)
             .border(
                 width = if (focused) 3.dp else 1.dp,
                 color = border,
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(16.dp)
             )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
@@ -620,7 +649,7 @@ private fun TvVideoCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .background(Color(0xFF18181B))
+                .background(Color(0xFF141822))
         ) {
             AsyncImage(
                 model = video.thumbnailUrl,
@@ -639,7 +668,7 @@ private fun TvVideoCard(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(8.dp)
-                        .background(Color(0xFFF59E0B), RoundedCornerShape(4.dp))
+                        .background(GlassColors.AccentAmber, RoundedCornerShape(5.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
@@ -653,7 +682,7 @@ private fun TvVideoCard(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(8.dp)
-                        .background(Color(0xCC09090B), RoundedCornerShape(5.dp))
+                        .background(Color(0xBB06070B), RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
@@ -662,7 +691,7 @@ private fun TvVideoCard(
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
                 text = video.title,
-                color = if (focused) Color(0xFFFFFFFF) else Color(0xFFF4F4F5),
+                color = if (focused) Color.White else GlassColors.TextPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
@@ -672,7 +701,7 @@ private fun TvVideoCard(
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = video.author,
-                color = if (focused) Color(0xFFF59E0B) else Color(0xFFA1A1AA),
+                color = if (focused) GlassColors.AccentAmber else GlassColors.TextSecondary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -696,15 +725,13 @@ private fun TvAddSourceDialog(
         Column(
             modifier = Modifier
                 .widthIn(min = 440.dp, max = 560.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF111114))
-                .border(1.dp, Color(0xFF27272A), RoundedCornerShape(18.dp))
+                .glassPanel(shape = RoundedCornerShape(22.dp), elevated = true)
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
                 text = "Add YouTube Channel or Playlist",
-                color = Color(0xFFF4F4F5),
+                color = GlassColors.TextPrimary,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )

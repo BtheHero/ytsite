@@ -6,8 +6,6 @@ import {
   SkipForward,
   Volume2,
   VolumeX,
-  Maximize2,
-  Minimize2,
   Shuffle,
   Repeat,
   ExternalLink,
@@ -21,6 +19,8 @@ import {
   Expand,
   Shrink,
   Scissors,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import { VideoItem, VideoSource } from '../types/youtube';
 import { formatRelativeDate, formatTimecode, formatViews } from '../utils/youtube';
@@ -109,12 +109,12 @@ interface YouTubeStageProps {
   hasPrevious: boolean;
   shuffle: boolean;
   loopQueue: boolean;
-  theaterMode: boolean;
+  showSideMenu: boolean;
   onNext: () => void;
   onPrevious: () => void;
   onToggleShuffle: () => void;
   onToggleLoop: () => void;
-  onToggleTheater: () => void;
+  onToggleSideMenu: () => void;
   onDiscoverPlaylistIds?: (ids: string[]) => void;
 }
 
@@ -136,12 +136,12 @@ export function YouTubeStage({
   hasPrevious,
   shuffle,
   loopQueue,
-  theaterMode,
+  showSideMenu,
   onNext,
   onPrevious,
   onToggleShuffle,
   onToggleLoop,
-  onToggleTheater,
+  onToggleSideMenu,
   onDiscoverPlaylistIds,
 }: YouTubeStageProps) {
   const stageWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -557,14 +557,14 @@ export function YouTubeStage({
       <div
         ref={stageWrapperRef}
         className={`relative flex flex-col ${
-          isFullscreen ? 'w-screen h-screen bg-[#09090B] p-4 gap-3' : ''
+          isFullscreen ? 'w-screen h-screen bg-[#06070B] p-4 gap-3' : ''
         }`}
       >
         {/* Ambient Cinema Glow */}
         {ambientMode && activeVideo?.thumbnail && !ambientImgFailed && !isFullscreen && (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -inset-4 -z-10 overflow-hidden rounded-3xl opacity-35 blur-3xl transition-opacity duration-500"
+            className="pointer-events-none absolute -inset-4 -z-10 overflow-hidden rounded-3xl opacity-40 blur-3xl transition-opacity duration-500"
           >
             <img
               src={activeVideo.thumbnail}
@@ -578,13 +578,13 @@ export function YouTubeStage({
 
         {/* Video Frame */}
         <div
-          className={`relative w-full ${aspectClass} bg-black rounded-xl overflow-hidden border border-zinc-800/90 shadow-2xl shadow-black/50`}
+          className={`relative w-full ${aspectClass} bg-black rounded-2xl overflow-hidden border border-white/15 shadow-2xl shadow-black/70`}
         >
           <div ref={containerRef} className="w-full h-full" />
 
           {!activeVideo && !source?.playlistId && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0D0D10] text-center p-6">
-              <p className="font-display text-xl font-semibold text-zinc-200 mb-2">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#090B12]/90 backdrop-blur-md text-center p-6">
+              <p className="font-display text-xl font-semibold text-zinc-100 mb-2">
                 Select a channel or playlist to start watching
               </p>
               <p className="text-sm text-zinc-400 max-w-md">
@@ -601,7 +601,7 @@ export function YouTubeStage({
                   href={`https://www.youtube.com/watch?v=${activeVideo.videoId}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-amber-500 text-zinc-950 rounded-md hover:bg-amber-400 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gradient-to-br from-amber-300 to-amber-500 text-zinc-950 rounded-lg hover:from-amber-200 hover:to-amber-400 transition-colors"
                 >
                   Watch on YouTube
                   <ExternalLink className="w-3.5 h-3.5" />
@@ -611,21 +611,21 @@ export function YouTubeStage({
           )}
         </div>
 
-        {/* Custom Theater Transport Bar */}
+        {/* Modern Floating Liquid Glass Transport Dock */}
         <div
-          className={`bg-[#111114] border border-zinc-800/80 rounded-xl px-4 py-3 ${
+          className={`glass-panel-elevated rounded-2xl px-4 py-3.5 ${
             isFullscreen ? 'shrink-0' : 'mt-3'
           }`}
         >
-          {/* Scrubber with SponsorBlock segment markers */}
-          <div className="flex items-center gap-3 mb-2.5">
-            <span className="font-mono text-xs text-zinc-400 tabular-nums w-12 text-right shrink-0">
+          {/* Scrubber with gradient track + SponsorBlock segment markers */}
+          <div className="flex items-center gap-3 mb-3">
+            <span className="font-mono text-xs text-zinc-200 tabular-nums w-12 text-right shrink-0">
               {formatTimecode(currentTime)}
             </span>
-            <div className="relative flex-1 flex items-center h-4">
-              <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+            <div className="relative flex-1 flex items-center h-4 group">
+              <div className="w-full h-1.5 rounded-full bg-white/15 overflow-hidden">
                 <div
-                  className="h-full bg-amber-500"
+                  className="h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-[width] duration-150"
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
@@ -656,7 +656,7 @@ export function YouTubeStage({
                 value={currentTime}
                 onChange={handleSeekBar}
                 disabled={!duration}
-                className="absolute inset-0 z-20 w-full h-full appearance-none bg-transparent accent-amber-500 cursor-pointer disabled:cursor-default"
+                className="absolute inset-0 z-20 w-full h-full appearance-none bg-transparent accent-amber-400 cursor-pointer disabled:cursor-default"
               />
             </div>
             <span className="font-mono text-xs text-zinc-400 tabular-nums w-12 shrink-0">
@@ -666,14 +666,14 @@ export function YouTubeStage({
 
           {/* Transport Controls */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1 sm:gap-1.5">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={onPrevious}
                 disabled={!hasPrevious}
                 title="Previous video (P)"
                 aria-label="Previous video"
-                className="p-2 rounded-lg text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/80 disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+                className="p-2 rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:text-white hover:bg-white/15 disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
               >
                 <SkipBack className="w-4 h-4" />
               </button>
@@ -683,7 +683,7 @@ export function YouTubeStage({
                 onClick={() => seekBy(-10)}
                 title="Rewind 10 seconds (J)"
                 aria-label="Rewind 10 seconds"
-                className="p-2 rounded-lg text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+                className="p-2 rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:text-white hover:bg-white/15 transition-all cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -693,7 +693,7 @@ export function YouTubeStage({
                 onClick={togglePlay}
                 title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
                 aria-label={isPlaying ? 'Pause video' : 'Play video'}
-                className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 transition-colors cursor-pointer"
+                className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-gradient-to-br from-amber-300 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-zinc-950 shadow-lg shadow-amber-500/25 border border-white/40 transition-all cursor-pointer"
               >
                 {isPlaying ? (
                   <Pause className="w-4 h-4 fill-current" />
@@ -707,7 +707,7 @@ export function YouTubeStage({
                 onClick={() => seekBy(10)}
                 title="Forward 10 seconds (L)"
                 aria-label="Forward 10 seconds"
-                className="p-2 rounded-lg text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+                className="p-2 rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:text-white hover:bg-white/15 transition-all cursor-pointer"
               >
                 <RotateCw className="w-4 h-4" />
               </button>
@@ -718,18 +718,18 @@ export function YouTubeStage({
                 disabled={!hasNext}
                 title="Next video (N)"
                 aria-label="Next video"
-                className="p-2 rounded-lg text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/80 disabled:opacity-35 disabled:pointer-events-none transition-colors cursor-pointer"
+                className="p-2 rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:text-white hover:bg-white/15 disabled:opacity-35 disabled:pointer-events-none transition-all cursor-pointer"
               >
                 <SkipForward className="w-4 h-4" />
               </button>
 
-              <div className="hidden sm:flex items-center gap-2 ml-2 pl-3 border-l border-zinc-800">
+              <div className="hidden sm:flex items-center gap-2 ml-2 pl-3 border-l border-white/10">
                 <button
                   type="button"
                   onClick={toggleMute}
                   title="Mute / Unmute (M)"
                   aria-label={isMuted ? 'Unmute' : 'Mute'}
-                  className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+                  className="p-1.5 rounded-lg text-zinc-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
                 >
                   {isMuted || volume === 0 ? (
                     <VolumeX className="w-4 h-4" />
@@ -744,22 +744,22 @@ export function YouTubeStage({
                   max={100}
                   value={isMuted ? 0 : volume}
                   onChange={handleVolumeChange}
-                  className="w-20 h-1 appearance-none rounded-full bg-zinc-800 accent-amber-500 cursor-pointer"
+                  className="w-20 h-1 appearance-none rounded-full bg-white/15 accent-amber-400 cursor-pointer"
                 />
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5">
+              <div className="flex items-center bg-black/35 border border-white/10 rounded-xl p-0.5">
                 {PLAYBACK_RATES.map((rate) => (
                   <button
                     key={rate}
                     type="button"
                     onClick={() => handleRateChange(rate)}
-                    className={`px-2 py-1 text-xs font-mono tabular-nums rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`px-2 py-1 text-xs font-mono tabular-nums rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                       playbackRate === rate
-                        ? 'bg-zinc-800 text-amber-400 font-medium'
-                        : 'text-zinc-400 hover:text-zinc-200'
+                        ? 'bg-amber-400/20 text-amber-300 font-semibold border border-amber-400/30'
+                        : 'text-zinc-400 hover:text-zinc-100'
                     }`}
                   >
                     {rate}x
@@ -773,10 +773,10 @@ export function YouTubeStage({
                 title={captionsEnabled ? 'Disable captions' : 'Enable captions'}
                 aria-pressed={captionsEnabled}
                 aria-label="Toggle captions"
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                   captionsEnabled
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                    ? 'bg-amber-400/20 border-amber-400/40 text-amber-300'
+                    : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Subtitles className="w-4 h-4" />
@@ -792,10 +792,10 @@ export function YouTubeStage({
                 }
                 aria-pressed={privacyMode}
                 aria-label="Toggle privacy-enhanced embed"
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                   privacyMode
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                    ? 'bg-amber-400/20 border-amber-400/40 text-amber-300'
+                    : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <ShieldCheck className="w-4 h-4" />
@@ -811,10 +811,10 @@ export function YouTubeStage({
                 }
                 aria-pressed={sponsorBlockEnabled}
                 aria-label="Toggle SponsorBlock auto-skip"
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                   sponsorBlockEnabled
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                    ? 'bg-emerald-400/20 border-emerald-400/40 text-emerald-300'
+                    : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Scissors className="w-4 h-4" />
@@ -826,10 +826,10 @@ export function YouTubeStage({
                 title={ambientMode ? 'Disable ambient glow' : 'Enable ambient glow'}
                 aria-pressed={ambientMode}
                 aria-label="Toggle ambient cinema glow"
-                className={`hidden sm:inline-flex p-2 rounded-lg transition-colors cursor-pointer ${
+                className={`hidden sm:inline-flex p-2 rounded-xl border transition-colors cursor-pointer ${
                   ambientMode
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                    ? 'bg-amber-400/20 border-amber-400/40 text-amber-300'
+                    : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Aperture className="w-4 h-4" />
@@ -841,7 +841,7 @@ export function YouTubeStage({
                   onClick={cycleAspect}
                   title="Cycle aspect ratio (16:9, 21:9, 4:3)"
                   aria-label={`Aspect ratio ${aspectMode}`}
-                  className="hidden sm:inline-flex px-2 py-1.5 text-xs font-mono tabular-nums rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  className="hidden sm:inline-flex px-2.5 py-1.5 text-xs font-mono tabular-nums rounded-xl bg-white/5 border border-white/10 text-zinc-200 hover:text-white hover:bg-white/10 transition-colors cursor-pointer whitespace-nowrap shrink-0"
                 >
                   {aspectMode}
                 </button>
@@ -853,10 +853,10 @@ export function YouTubeStage({
                 title="Shuffle queue"
                 aria-pressed={shuffle}
                 aria-label="Toggle shuffle"
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                   shuffle
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                    ? 'bg-amber-400/20 border-amber-400/40 text-amber-300'
+                    : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Shuffle className="w-4 h-4" />
@@ -868,10 +868,10 @@ export function YouTubeStage({
                 title="Loop queue"
                 aria-pressed={loopQueue}
                 aria-label="Toggle loop queue"
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                   loopQueue
-                    ? 'bg-amber-500/15 text-amber-400'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80'
+                    ? 'bg-amber-400/20 border-amber-400/40 text-amber-300'
+                    : 'bg-white/5 border-white/10 text-zinc-300 hover:text-white hover:bg-white/10'
                 }`}
               >
                 <Repeat className="w-4 h-4" />
@@ -880,16 +880,26 @@ export function YouTubeStage({
               {!isFullscreen && (
                 <button
                   type="button"
-                  onClick={onToggleTheater}
-                  title={theaterMode ? 'Standard layout' : 'Theater wide mode'}
-                  aria-pressed={theaterMode}
-                  aria-label={theaterMode ? 'Exit theater mode' : 'Enter theater mode'}
-                  className="hidden lg:inline-flex p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+                  onClick={onToggleSideMenu}
+                  title={showSideMenu ? 'Hide side menu' : 'Show side menu'}
+                  aria-pressed={!showSideMenu}
+                  aria-label={showSideMenu ? 'Hide side menu' : 'Show side menu'}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-xl border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    !showSideMenu
+                      ? 'bg-amber-400/20 border-amber-400/40 text-amber-200'
+                      : 'bg-white/5 border-white/10 text-zinc-200 hover:text-white hover:bg-white/10'
+                  }`}
                 >
-                  {theaterMode ? (
-                    <Minimize2 className="w-4 h-4" />
+                  {showSideMenu ? (
+                    <>
+                      <PanelRightClose className="w-3.5 h-3.5" />
+                      <span className="hidden xl:inline">Hide Menu</span>
+                    </>
                   ) : (
-                    <Maximize2 className="w-4 h-4" />
+                    <>
+                      <PanelRightOpen className="w-3.5 h-3.5" />
+                      <span>Show Menu</span>
+                    </>
                   )}
                 </button>
               )}
@@ -900,7 +910,7 @@ export function YouTubeStage({
                 title={isFullscreen ? 'Exit fullscreen (F)' : 'Custom fullscreen (F)'}
                 aria-pressed={isFullscreen}
                 aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-                className="p-2 rounded-lg text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+                className="p-2 rounded-xl bg-white/5 border border-white/10 text-zinc-200 hover:text-white hover:bg-white/15 transition-colors cursor-pointer"
               >
                 {isFullscreen ? <Shrink className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
               </button>
@@ -911,7 +921,7 @@ export function YouTubeStage({
 
       {/* Active Video Editorial Metadata */}
       {activeVideo && (
-        <div className="mt-4 px-1">
+        <div className="mt-4 glass-panel rounded-2xl p-4 sm:p-5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400 mb-1.5">
             <span className="font-medium text-zinc-200">{activeVideo.author}</span>
             {source && (
@@ -945,7 +955,7 @@ export function YouTubeStage({
             {skipNotice && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="text-amber-400 font-medium">{skipNotice}</span>
+                <span className="text-amber-300 font-medium">{skipNotice}</span>
               </>
             )}
           </div>
@@ -960,7 +970,7 @@ export function YouTubeStage({
                 href={`https://www.youtube.com/watch?v=${activeVideo.videoId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 hover:text-zinc-100 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-200 bg-white/5 border border-white/15 hover:bg-white/10 hover:text-white rounded-xl transition-colors whitespace-nowrap shrink-0"
               >
                 YouTube
                 <ExternalLink className="w-3.5 h-3.5" />
@@ -969,7 +979,7 @@ export function YouTubeStage({
           </div>
 
           {activeVideo.description && (
-            <div className="mt-3 pt-3 border-t border-zinc-800/70">
+            <div className="mt-3 pt-3 border-t border-white/10">
               <button
                 type="button"
                 onClick={() => setShowDescription((prev) => !prev)}
@@ -986,7 +996,7 @@ export function YouTubeStage({
                 )}
               </button>
               {showDescription && (
-                <p className="mt-2 text-sm text-zinc-400 whitespace-pre-line leading-relaxed max-w-3xl">
+                <p className="mt-2 text-sm text-zinc-300 whitespace-pre-line leading-relaxed max-w-3xl">
                   {activeVideo.description}
                 </p>
               )}

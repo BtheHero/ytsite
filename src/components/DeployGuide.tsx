@@ -24,7 +24,7 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
   };
 
   return (
-    <section id="deploy" className="pt-10 border-t border-zinc-800/80">
+    <section id="deploy" className="pt-10 border-t border-white/10">
       <div className="mb-6">
         <h2 className="font-display text-2xl font-bold tracking-tight text-zinc-100">
           Host on Cloudflare Pages or GitHub Pages
@@ -36,10 +36,10 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Cloudflare Pages Card */}
-        <div className="bg-[#111114] border border-zinc-800/80 rounded-xl p-6 flex flex-col justify-between">
+        <div className="glass-panel rounded-2xl p-6 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between gap-2 text-xs text-zinc-400 mb-2">
-              <span className="text-amber-400 font-medium">Recommended</span>
+              <span className="text-amber-300 font-medium">Recommended</span>
               <span>Static + Edge Function</span>
             </div>
             <h3 className="font-display text-lg font-semibold text-zinc-100 mb-3">
@@ -51,7 +51,7 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
                 In Cloudflare Dashboard, go to <span className="text-zinc-100 font-medium">Workers &amp; Pages → Create → Pages → Connect to Git</span>.
               </li>
               <li>
-                Set build command to <code className="font-mono text-xs bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded text-amber-300">npm run build</code> and output directory to <code className="font-mono text-xs bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded text-amber-300">dist</code>.
+                Set build command to <code className="font-mono text-xs bg-white/5 border border-white/10 px-1.5 py-0.5 rounded text-amber-300">npm run build</code> and output directory to <code className="font-mono text-xs bg-white/5 border border-white/10 px-1.5 py-0.5 rounded text-amber-300">dist</code>.
               </li>
               <li>
                 Cloudflare automatically deploys <code className="font-mono text-xs text-zinc-200">functions/api/feed.ts</code> at <code className="font-mono text-xs text-zinc-200">/api/feed</code> so <code className="font-mono text-xs text-zinc-200">@handle</code> URLs and YouTube RSS feeds cache at the edge.
@@ -59,13 +59,13 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
             </ol>
           </div>
 
-          <div className="mt-5 pt-4 border-t border-zinc-800/70 flex items-center justify-between text-xs text-zinc-400">
+          <div className="mt-5 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
             <span className="font-mono">wrangler.toml · public/_redirects</span>
             <a
               href="https://developers.cloudflare.com/pages/framework-guides/deploy-a-vite3-project/"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-zinc-200 hover:text-amber-400 transition-colors"
+              className="inline-flex items-center gap-1 text-zinc-200 hover:text-amber-300 transition-colors"
             >
               Cloudflare Docs <ExternalLink className="w-3 h-3" />
             </a>
@@ -73,7 +73,7 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
         </div>
 
         {/* GitHub Pages Card */}
-        <div className="bg-[#111114] border border-zinc-800/80 rounded-xl p-6 flex flex-col justify-between">
+        <div className="glass-panel rounded-2xl p-6 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between gap-2 text-xs text-zinc-400 mb-2">
               <span className="font-medium text-zinc-300">Pure Static</span>
@@ -96,13 +96,13 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
             </ol>
           </div>
 
-          <div className="mt-5 pt-4 border-t border-zinc-800/70 flex items-center justify-between text-xs text-zinc-400">
+          <div className="mt-5 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
             <span className="font-mono">.github/workflows/deploy-pages.yml</span>
             <a
               href="https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-zinc-200 hover:text-amber-400 transition-colors"
+              className="inline-flex items-center gap-1 text-zinc-200 hover:text-amber-300 transition-colors"
             >
               GitHub Docs <ExternalLink className="w-3 h-3" />
             </a>
@@ -111,7 +111,7 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
       </div>
 
       {/* Live sources.json Export */}
-      <div className="bg-[#111114] border border-zinc-800/80 rounded-xl p-6">
+      <div className="glass-panel rounded-2xl p-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
           <div>
             <h3 className="font-display text-base font-semibold text-zinc-100">
@@ -126,11 +126,11 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
             <button
               type="button"
               onClick={handleCopyJson}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-200 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-200 bg-white/5 border border-white/12 hover:bg-white/10 rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               {copiedJson ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-amber-400" />
+                  <Check className="w-3.5 h-3.5 text-amber-300" />
                   Copied
                 </>
               ) : (
@@ -144,7 +144,7 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
             <button
               type="button"
               onClick={onDownloadSourcesJson}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-zinc-950 bg-amber-500 hover:bg-amber-400 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-zinc-950 bg-gradient-to-br from-amber-300 to-amber-500 hover:from-amber-200 hover:to-amber-400 rounded-xl shadow-md shadow-amber-500/20 transition-all whitespace-nowrap shrink-0 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               Download sources.json
@@ -152,7 +152,7 @@ export function DeployGuide({ sources, onDownloadSourcesJson }: DeployGuideProps
           </div>
         </div>
 
-        <pre className="bg-[#09090B] border border-zinc-800/80 rounded-lg p-4 text-xs font-mono text-zinc-300 overflow-x-auto max-h-64 cinema-scroll">
+        <pre className="glass-input rounded-xl p-4 text-xs font-mono text-zinc-300 overflow-x-auto max-h-64 cinema-scroll">
           {jsonPreview}
         </pre>
       </div>

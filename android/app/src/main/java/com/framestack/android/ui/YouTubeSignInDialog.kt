@@ -9,7 +9,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,30 +39,52 @@ fun YouTubeSignInDialog(
     onSignOut: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var mode by remember { mutableStateOf("browser") } // "browser" or "paste"
+    var mode by remember { mutableStateOf("browser") }
     var pastedCookies by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var capturedOnce by remember { mutableStateOf(false) }
+    var pageProgress by remember { mutableIntStateOf(0) }
+
+    fun collectMergedYouTubeCookies(): String {
+        val cm = CookieManager.getInstance()
+        val origins = listOf(
+            "https://www.youtube.com",
+            "https://m.youtube.com",
+            "https://youtube.com"
+        )
+        val mergedMap = LinkedHashMap<String, String>()
+        for (origin in origins) {
+            val raw = cm.getCookie(origin).orEmpty()
+            raw.split(";").forEach { part ->
+                val idx = part.indexOf('=')
+                if (idx > 0) {
+                    val k = part.substring(0, idx).trim()
+                    val v = part.substring(idx + 1).trim()
+                    if (k.isNotEmpty() && v.isNotEmpty()) {
+                        mergedMap[k] = v
+                    }
+                }
+            }
+        }
+        return mergedMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
+
+    val initialCookieSnapshot = remember { collectMergedYouTubeCookies() }
 
     fun tryExtractCookies(autoClose: Boolean) {
         if (capturedOnce) return
-        val cm = CookieManager.getInstance()
-        val ytCookies = cm.getCookie("https://www.youtube.com").orEmpty()
-        val mCookies = cm.getCookie("https://m.youtube.com").orEmpty()
-        val merged = listOf(ytCookies, mCookies)
-            .filter { it.isNotBlank() }
-            .joinToString("; ")
-        if (YouTubeAuthManager.hasValidAuthCookies(merged)) {
+        val merged = collectMergedYouTubeCookies()
+        val isFreshChange = !isSignedIn || merged != initialCookieSnapshot
+        if (YouTubeAuthManager.hasValidAuthCookies(merged) && (!autoClose || isFreshChange)) {
             capturedOnce = true
-            cm.flush()
+            CookieManager.getInstance().flush()
             onSignedIn(merged)
         } else if (!autoClose) {
             statusMessage = "Complete Google sign-in above first, then tap Save Session."
         }
     }
 
-    // Automatically detect when Google Sign-In completes and sets YouTube auth cookies
     LaunchedEffect(mode) {
         if (mode == "browser") {
             while (!capturedOnce) {
@@ -90,11 +111,9 @@ fun YouTubeSignInDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.94f)
-                .fillMaxHeight(if (mode == "browser") 0.86f else 0.56f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF111114))
-                .border(1.dp, Color(0xFF27272A), RoundedCornerShape(18.dp))
-                .padding(16.dp)
+                .fillMaxHeight(if (mode == "browser") 0.88f else 0.56f)
+                .glassPanel(shape = RoundedCornerShape(22.dp), elevated = true)
+                .padding(18.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -104,13 +123,13 @@ fun YouTubeSignInDialog(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isSignedIn) "YouTube Session Active" else "Sign in with YouTube",
-                        color = Color(0xFFF4F4F5),
+                        color = GlassColors.TextPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = "Bypasses network bot checks & age-restricted videos locally",
-                        color = Color(0xFFA1A1AA),
+                        color = GlassColors.TextSecondary,
                         fontSize = 12.sp
                     )
                 }
@@ -119,7 +138,7 @@ fun YouTubeSignInDialog(
                     Icon(
                         Icons.Rounded.Close,
                         contentDescription = "Close",
-                        tint = Color(0xFFA1A1AA)
+                        tint = GlassColors.TextSecondary
                     )
                 }
             }
@@ -139,8 +158,8 @@ fun YouTubeSignInDialog(
                     },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = Color(0x33F59E0B),
-                        selectedLabelColor = Color(0xFFFDE68A),
-                        selectedLeadingIconColor = Color(0xFFF59E0B)
+                        selectedLabelColor = GlassColors.AccentAmberSoft,
+                        selectedLeadingIconColor = GlassColors.AccentAmber
                     )
                 )
                 FilterChip(
@@ -152,8 +171,8 @@ fun YouTubeSignInDialog(
                     },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = Color(0x33F59E0B),
-                        selectedLabelColor = Color(0xFFFDE68A),
-                        selectedLeadingIconColor = Color(0xFFF59E0B)
+                        selectedLabelColor = GlassColors.AccentAmberSoft,
+                        selectedLeadingIconColor = GlassColors.AccentAmber
                     )
                 )
 
@@ -161,7 +180,7 @@ fun YouTubeSignInDialog(
                     Spacer(modifier = Modifier.weight(1f))
                     OutlinedButton(
                         onClick = onSignOut,
-                        border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+                        border = BorderStroke(1.dp, Color(0x44FFFFFF)),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFCA5A5)),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
@@ -176,7 +195,7 @@ fun YouTubeSignInDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = statusMessage!!,
-                    color = Color(0xFFFBBF24),
+                    color = GlassColors.AccentAmberSoft,
                     fontSize = 12.sp
                 )
             }
@@ -184,11 +203,24 @@ fun YouTubeSignInDialog(
             Spacer(modifier = Modifier.height(10.dp))
 
             if (mode == "browser") {
+                if (pageProgress in 1..99) {
+                    LinearProgressIndicator(
+                        progress = { pageProgress / 100f },
+                        color = GlassColors.AccentAmber,
+                        trackColor = Color(0x33FFFFFF),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(Color.White)
                 ) {
                     AndroidView(
@@ -209,7 +241,11 @@ fun YouTubeSignInDialog(
                                 settings.userAgentString =
                                     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36"
 
-                                webChromeClient = WebChromeClient()
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                        pageProgress = newProgress
+                                    }
+                                }
                                 webViewClient = object : WebViewClient() {
                                     override fun shouldOverrideUrlLoading(
                                         view: WebView?,
@@ -222,7 +258,7 @@ fun YouTubeSignInDialog(
                                     }
                                 }
                                 loadUrl(
-                                    "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2F&hl=en"
+                                    "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F&hl=en"
                                 )
                                 webViewRef = this
                             }
@@ -238,13 +274,13 @@ fun YouTubeSignInDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = Color(0xFFA1A1AA))
+                        Text("Cancel", color = GlassColors.TextSecondary)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { tryExtractCookies(autoClose = false) },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFF59E0B),
+                            containerColor = GlassColors.AccentAmber,
                             contentColor = Color(0xFF09090B)
                         ),
                         shape = RoundedCornerShape(10.dp)
@@ -261,10 +297,10 @@ fun YouTubeSignInDialog(
                     minLines = 4,
                     maxLines = 8,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFFF59E0B),
-                        unfocusedBorderColor = Color(0xFF27272A),
-                        focusedTextColor = Color(0xFFF4F4F5),
-                        unfocusedTextColor = Color(0xFFF4F4F5)
+                        focusedBorderColor = GlassColors.AccentAmber,
+                        unfocusedBorderColor = Color(0x33FFFFFF),
+                        focusedTextColor = GlassColors.TextPrimary,
+                        unfocusedTextColor = GlassColors.TextPrimary
                     ),
                     modifier = Modifier
                         .weight(1f)
@@ -278,7 +314,7 @@ fun YouTubeSignInDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = Color(0xFFA1A1AA))
+                        Text("Cancel", color = GlassColors.TextSecondary)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -293,7 +329,7 @@ fun YouTubeSignInDialog(
                             }
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFF59E0B),
+                            containerColor = GlassColors.AccentAmber,
                             contentColor = Color(0xFF09090B)
                         ),
                         shape = RoundedCornerShape(10.dp)

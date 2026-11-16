@@ -16,9 +16,7 @@ class YouTubeAuthManager(context: Context) {
 
     fun isSignedIn(): Boolean {
         val cookies = getCookies() ?: return false
-        val hasSid = cookies.contains("SID=") || cookies.contains("__Secure-1PSID=") || cookies.contains("__Secure-3PSID=")
-        val hasSapisid = extractSapisid(cookies) != null
-        return hasSid && hasSapisid
+        return hasValidAuthCookies(cookies)
     }
 
     fun saveCookies(rawInput: String): String {
@@ -83,11 +81,11 @@ class YouTubeAuthManager(context: Context) {
 
     /**
      * Accepts either standard HTTP Cookie header format ("SID=...; SAPISID=...")
-     * or Netscape cookies.txt lines copied from a desktop browser extension.
+     * or Netscape cookies.txt lines, and deduplicates keys cleanly.
      */
     private fun normalizeCookieInput(rawInput: String): String {
         val trimmed = rawInput.trim()
-        if (trimmed.contains("\t")) {
+        val rawHeader = if (trimmed.contains("\t")) {
             val extracted = trimmed.lineSequence()
                 .map { it.trim() }
                 .filter { it.isNotEmpty() && !it.startsWith("#") }
@@ -96,11 +94,17 @@ class YouTubeAuthManager(context: Context) {
                     if (cols.size >= 7) "${cols[5]}=${cols[6]}" else null
                 }
                 .toList()
-            if (extracted.isNotEmpty()) {
-                return extracted.joinToString("; ")
-            }
+            if (extracted.isNotEmpty()) extracted.joinToString("; ") else trimmed
+        } else {
+            trimmed.removePrefix("Cookie:").removePrefix("cookie:").trim()
         }
-        return trimmed.removePrefix("Cookie:").removePrefix("cookie:").trim()
+
+        val deduped = parseCookieMap(rawHeader)
+        return if (deduped.isNotEmpty()) {
+            deduped.entries.joinToString("; ") { "${it.key}=${it.value}" }
+        } else {
+            rawHeader
+        }
     }
 
     companion object {
@@ -111,10 +115,11 @@ class YouTubeAuthManager(context: Context) {
             val hasSid = cookieString.contains("SID=") ||
                 cookieString.contains("__Secure-1PSID=") ||
                 cookieString.contains("__Secure-3PSID=")
-            val hasSapisid = cookieString.contains("SAPISID=") ||
+            val hasSapisidOrLoginInfo = cookieString.contains("SAPISID=") ||
                 cookieString.contains("__Secure-3PAPISID=") ||
-                cookieString.contains("__Secure-1PAPISID=")
-            return hasSid && hasSapisid
+                cookieString.contains("__Secure-1PAPISID=") ||
+                cookieString.contains("LOGIN_INFO=")
+            return hasSid && hasSapisidOrLoginInfo
         }
     }
 }

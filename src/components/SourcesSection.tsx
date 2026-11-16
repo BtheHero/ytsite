@@ -48,7 +48,7 @@ export function SourcesSection({
   const playlistCount = sources.filter((s) => s.type === 'playlist').length;
 
   return (
-    <section id="sources" className="pt-10 border-t border-zinc-800/80">
+    <section id="sources" className="pt-10 border-t border-white/10">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
         <div>
           <h2 className="font-display text-2xl font-bold tracking-tight text-zinc-100">
@@ -77,7 +77,7 @@ export function SourcesSection({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-300 bg-[#111114] border border-zinc-800 hover:border-zinc-700 hover:text-zinc-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-200 bg-white/5 border border-white/12 hover:bg-white/10 hover:text-white rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             Import JSON
@@ -86,7 +86,7 @@ export function SourcesSection({
           <button
             type="button"
             onClick={onExportJson}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-300 bg-[#111114] border border-zinc-800 hover:border-zinc-700 hover:text-zinc-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-200 bg-white/5 border border-white/12 hover:bg-white/10 hover:text-white rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             Export sources.json
@@ -95,7 +95,7 @@ export function SourcesSection({
           <button
             type="button"
             onClick={onOpenAddModal}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-zinc-950 bg-amber-500 hover:bg-amber-400 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-zinc-950 bg-gradient-to-br from-amber-300 to-amber-500 hover:from-amber-200 hover:to-amber-400 rounded-xl shadow-md shadow-amber-500/20 transition-all whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             Add Source
@@ -108,7 +108,7 @@ export function SourcesSection({
         <div
           role="tablist"
           aria-label="Filter sources by type"
-          className="inline-flex items-center gap-1 p-1 bg-[#111114] border border-zinc-800/80 rounded-lg self-start"
+          className="inline-flex items-center gap-1 p-1 glass-panel rounded-xl self-start"
         >
           {(
             [
@@ -123,10 +123,10 @@ export function SourcesSection({
               role="tab"
               aria-selected={filter === tab.id}
               onClick={() => setFilter(tab.id)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 filter === tab.id
-                  ? 'bg-zinc-800 text-zinc-100'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                  ? 'bg-white/15 text-white border border-white/15'
+                  : 'text-zinc-400 hover:text-zinc-100'
               }`}
             >
               {tab.label}
@@ -135,21 +135,21 @@ export function SourcesSection({
         </div>
 
         <div className="relative w-full sm:w-64">
-          <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search sources..."
             aria-label="Search sources"
-            className="w-full bg-[#111114] border border-zinc-800 focus:border-amber-500/70 focus:outline-none rounded-lg pl-8 pr-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 transition-colors"
+            className="w-full glass-input focus:border-amber-400/70 focus:outline-none rounded-xl pl-8 pr-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 transition-colors"
           />
         </div>
       </div>
 
       {/* Sources Grid */}
       {filteredSources.length === 0 ? (
-        <div className="bg-[#111114] border border-zinc-800/80 rounded-xl p-10 text-center">
+        <div className="glass-panel rounded-2xl p-10 text-center">
           <p className="font-display text-lg font-semibold text-zinc-200 mb-1">
             No matching sources
           </p>
@@ -161,7 +161,7 @@ export function SourcesSection({
           <button
             type="button"
             onClick={onOpenAddModal}
-            className="px-4 py-2 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-lg transition-colors cursor-pointer"
+            className="px-4 py-2 text-xs font-semibold bg-gradient-to-br from-amber-300 to-amber-500 hover:from-amber-200 hover:to-amber-400 text-zinc-950 rounded-xl transition-all cursor-pointer"
           >
             Add YouTube Source
           </button>
@@ -177,10 +177,10 @@ export function SourcesSection({
             return (
               <article
                 key={source.id}
-                className={`bg-[#111114] rounded-xl p-5 flex flex-col justify-between transition-colors ${
+                className={`glass-panel rounded-2xl p-5 flex flex-col justify-between transition-all ${
                   isActive
-                    ? 'border border-amber-500/60'
-                    : 'border border-zinc-800/80 hover:border-zinc-700'
+                    ? '!border-amber-400/60 shadow-lg shadow-amber-500/10'
+                    : 'hover:!border-white/25'
                 }`}
               >
                 <div>
@@ -190,7 +190,7 @@ export function SourcesSection({
                       <span aria-hidden="true"> · </span>
                       {source.category}
                     </span>
-                    <span className="tabular-nums text-zinc-500">
+                    <span className="tabular-nums text-zinc-400">
                       {videoCount > 0 ? `${videoCount} videos` : isLoading ? 'Loading...' : 'Ready'}
                     </span>
                   </div>
@@ -208,7 +208,7 @@ export function SourcesSection({
                             type="button"
                             onClick={() => onSelectSource(source.id)}
                             aria-label={`Play ${source.title}`}
-                            className="aspect-video rounded-md overflow-hidden bg-zinc-900 cursor-pointer group"
+                            className="aspect-video rounded-lg overflow-hidden bg-zinc-900 border border-white/10 cursor-pointer group"
                           >
                             <ThumbnailImage
                               src={vid.thumbnail}
@@ -221,20 +221,20 @@ export function SourcesSection({
                       : Array.from({ length: 3 }).map((_, idx) => (
                           <div
                             key={idx}
-                            className="aspect-video rounded-md bg-zinc-900/80 border border-zinc-800/70"
+                            className="aspect-video rounded-lg bg-white/5 border border-white/10"
                           />
                         ))}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-zinc-800/70">
+                <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-white/10">
                   <button
                     type="button"
                     onClick={() => onSelectSource(source.id)}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                       isActive
-                        ? 'bg-amber-500 text-zinc-950'
-                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-100'
+                        ? 'bg-gradient-to-br from-amber-300 to-amber-500 text-zinc-950 shadow-md shadow-amber-500/20'
+                        : 'bg-white/10 hover:bg-white/15 border border-white/10 text-zinc-100'
                     }`}
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
@@ -248,7 +248,7 @@ export function SourcesSection({
                       disabled={isLoading}
                       title="Refresh feed"
                       aria-label={`Refresh ${source.title}`}
-                      className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+                      className="p-2 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-white/10 transition-colors cursor-pointer"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
@@ -257,7 +257,7 @@ export function SourcesSection({
                       onClick={() => onRemoveSource(source.id)}
                       title="Remove source"
                       aria-label={`Remove ${source.title}`}
-                      className="p-2 rounded-lg text-zinc-400 hover:text-red-400 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+                      className="p-2 rounded-xl text-zinc-400 hover:text-red-400 hover:bg-white/10 transition-colors cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

@@ -84,14 +84,14 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-source-title"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg bg-[#111114] border border-zinc-800 rounded-xl p-6 shadow-2xl"
+        className="w-full max-w-lg glass-panel-elevated rounded-2xl p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 mb-5">
@@ -108,7 +108,7 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
             type="button"
             onClick={onClose}
             aria-label="Close modal"
-            className="p-2 rounded-lg text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-white/10 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -129,7 +129,7 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
                 setSubmitError(null);
               }}
               placeholder="https://www.youtube.com/playlist?list=PL... or @handle"
-              className="w-full bg-[#09090B] border border-zinc-800 focus:border-amber-500/80 focus:outline-none rounded-lg px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 transition-colors"
+              className="w-full glass-input focus:border-amber-400/80 focus:outline-none rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 transition-colors"
             />
 
             {liveParse?.parsed && (
@@ -157,7 +157,7 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
                 value={titleInput}
                 onChange={(e) => setTitleInput(e.target.value)}
                 placeholder="Auto-detected from feed"
-                className="w-full bg-[#09090B] border border-zinc-800 focus:border-amber-500/80 focus:outline-none rounded-lg px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 transition-colors"
+                className="w-full glass-input focus:border-amber-400/80 focus:outline-none rounded-xl px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 transition-colors"
               />
             </div>
 
@@ -171,14 +171,14 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
                 value={categoryInput}
                 onChange={(e) => setCategoryInput(e.target.value)}
                 placeholder="Science, Music, Design..."
-                className="w-full bg-[#09090B] border border-zinc-800 focus:border-amber-500/80 focus:outline-none rounded-lg px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 transition-colors"
+                className="w-full glass-input focus:border-amber-400/80 focus:outline-none rounded-xl px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 transition-colors"
               />
             </div>
           </div>
 
           {/* Quick Add Presets */}
           <div>
-            <p className="text-xs text-zinc-500 mb-2">Quick fill examples:</p>
+            <p className="text-xs text-zinc-400 mb-2">Quick fill examples:</p>
             <div className="flex flex-wrap gap-2">
               {QUICK_EXAMPLES.map((ex) => (
                 <button
@@ -190,7 +190,7 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
                     setCategoryInput(ex.category);
                     setSubmitError(null);
                   }}
-                  className="px-2.5 py-1 text-xs font-medium bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded-md transition-colors cursor-pointer"
+                  className="px-2.5 py-1 text-xs font-medium bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-zinc-200 rounded-lg transition-colors cursor-pointer"
                 >
                   {ex.label}
                 </button>
@@ -199,7 +199,7 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
           </div>
 
           {submitError && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-300">
+            <div className="p-3 rounded-xl bg-red-500/15 border border-red-400/35 text-xs text-red-200">
               {submitError}
             </div>
           )}
@@ -208,14 +208,14 @@ export function AddSourceModal({ open, onClose, onAdd }: AddSourceModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-zinc-300 hover:text-zinc-100 rounded-lg transition-colors cursor-pointer"
+              className="px-4 py-2 text-xs font-medium text-zinc-300 hover:text-zinc-100 rounded-xl transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting || !urlInput.trim()}
-              className="px-4 py-2 text-xs font-semibold bg-amber-500 hover:bg-amber-400 disabled:opacity-45 text-zinc-950 rounded-lg transition-colors cursor-pointer"
+              className="px-4 py-2 text-xs font-semibold bg-gradient-to-br from-amber-300 to-amber-500 hover:from-amber-200 hover:to-amber-400 disabled:opacity-45 text-zinc-950 rounded-xl shadow-md shadow-amber-500/20 transition-all cursor-pointer"
             >
               {submitting ? 'Loading Feed...' : 'Add Source'}
             </button>

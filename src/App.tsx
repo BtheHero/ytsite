@@ -52,7 +52,7 @@ export default function App() {
   const [loadingSourceIds, setLoadingSourceIds] = useState<Record<string, boolean>>({});
   const [shuffle, setShuffle] = useState(false);
   const [loopQueue, setLoopQueue] = useState(true);
-  const [theaterMode, setTheaterMode] = useState(false);
+  const [showSideMenu, setShowSideMenu] = useState(true);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [activeNav, setActiveNav] = useState<'player' | 'sources' | 'deploy'>('player');
   const [notice, setNotice] = useState<{ type: 'info' | 'error'; text: string } | null>(null);
@@ -452,7 +452,12 @@ export default function App() {
     if (section === 'player') setActiveNav('player');
     if (section === 'sources') setActiveNav('sources');
     if (section === 'deploy') setActiveNav('deploy');
-    document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (section === 'queue') {
+      setShowSideMenu(true);
+    }
+    window.requestAnimationFrame(() => {
+      document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   const hasNext =
@@ -460,7 +465,13 @@ export default function App() {
   const hasPrevious = activeVideos.length > 0 && (loopQueue || activeIndex > 0);
 
   return (
-    <div className="min-h-screen bg-[#09090B] text-zinc-100 flex flex-col">
+    <div className="relative min-h-screen bg-gradient-to-b from-[#06070B] to-[#0A0D16] text-zinc-100 flex flex-col overflow-x-hidden">
+      {/* Subtle ambient light refraction orbs for Liquid Glass surfaces */}
+      <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden -z-0">
+        <div className="absolute -top-40 -left-32 w-[540px] h-[540px] rounded-full bg-amber-500/10 blur-[130px]" />
+        <div className="absolute -bottom-48 -right-32 w-[620px] h-[620px] rounded-full bg-sky-400/10 blur-[140px]" />
+      </div>
+
       <TopBar
         activeSection={activeNav}
         onNavigate={handleNavigate}
@@ -468,13 +479,13 @@ export default function App() {
       />
 
       {notice && (
-        <div className="max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+        <div className="relative z-10 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-4">
           <div
             role="status"
-            className={`px-4 py-2.5 rounded-lg text-xs font-medium border ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-medium backdrop-blur-xl border ${
               notice.type === 'error'
-                ? 'bg-red-500/10 border-red-500/30 text-red-300'
-                : 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+                ? 'bg-red-500/15 border-red-400/35 text-red-200'
+                : 'bg-amber-500/15 border-amber-400/35 text-amber-100'
             }`}
           >
             {notice.text}
@@ -482,15 +493,15 @@ export default function App() {
         </div>
       )}
 
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-12">
+      <main className="relative z-10 flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-12">
         {/* Primary Theater Workspace */}
         <section id="player" aria-label="Video Player Theater">
           <div
             className={`grid grid-cols-1 gap-6 items-start ${
-              theaterMode ? 'lg:grid-cols-1' : 'lg:grid-cols-12'
+              showSideMenu ? 'lg:grid-cols-12' : 'lg:grid-cols-1'
             }`}
           >
-            <div className={theaterMode ? 'lg:col-span-1' : 'lg:col-span-8'}>
+            <div className={showSideMenu ? 'lg:col-span-8' : 'lg:col-span-1'}>
               <YouTubeStage
                 source={activeSource}
                 activeVideo={activeVideo}
@@ -498,30 +509,33 @@ export default function App() {
                 hasPrevious={hasPrevious}
                 shuffle={shuffle}
                 loopQueue={loopQueue}
-                theaterMode={theaterMode}
+                showSideMenu={showSideMenu}
                 onNext={handleNextVideo}
                 onPrevious={handlePreviousVideo}
                 onToggleShuffle={() => setShuffle((s) => !s)}
                 onToggleLoop={() => setLoopQueue((l) => !l)}
-                onToggleTheater={() => setTheaterMode((t) => !t)}
+                onToggleSideMenu={() => setShowSideMenu((prev) => !prev)}
                 onDiscoverPlaylistIds={handleDiscoverPlaylistIds}
               />
             </div>
 
-            <div className={theaterMode ? 'lg:col-span-1' : 'lg:col-span-4'}>
-              <QueuePanel
-                source={activeSource}
-                videos={activeVideos}
-                activeVideoId={activeVideo?.videoId || null}
-                loading={Boolean(activeSourceId && loadingSourceIds[activeSourceId])}
-                error={activeSource?.error}
-                onSelectVideo={(video) => setActiveVideoId(video.videoId)}
-                onRefreshSource={() => {
-                  if (activeSource) void refreshFeedForSource(activeSource, false);
-                }}
-                onShufflePick={handleShufflePick}
-              />
-            </div>
+            {showSideMenu && (
+              <div className="lg:col-span-4">
+                <QueuePanel
+                  source={activeSource}
+                  videos={activeVideos}
+                  activeVideoId={activeVideo?.videoId || null}
+                  loading={Boolean(activeSourceId && loadingSourceIds[activeSourceId])}
+                  error={activeSource?.error}
+                  onSelectVideo={(video) => setActiveVideoId(video.videoId)}
+                  onRefreshSource={() => {
+                    if (activeSource) void refreshFeedForSource(activeSource, false);
+                  }}
+                  onShufflePick={handleShufflePick}
+                  onHideSideMenu={() => setShowSideMenu(false)}
+                />
+              </div>
+            )}
           </div>
         </section>
 
@@ -545,8 +559,8 @@ export default function App() {
         <DeployGuide sources={sources} onDownloadSourcesJson={handleExportJson} />
       </main>
 
-      <footer className="border-t border-zinc-800/80 mt-12">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-zinc-500">
+      <footer className="relative z-10 border-t border-white/10 mt-12">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-zinc-400">
           <p>
             Shortcuts: Space play/pause · J/L seek 10s · N/P next/previous · M mute · F fullscreen
           </p>
@@ -554,7 +568,7 @@ export default function App() {
             <button
               type="button"
               onClick={handleResetDefaults}
-              className="text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+              className="text-zinc-300 hover:text-amber-300 transition-colors cursor-pointer"
             >
               Reset Default Sources
             </button>

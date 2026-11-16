@@ -9,7 +9,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,6 +19,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -65,6 +67,7 @@ import kotlinx.coroutines.delay
 @OptIn(UnstableApi::class)
 @Composable
 fun TvVideoPlayer(
+    videoId: String?,
     title: String,
     author: String,
     quality: QualityOption?,
@@ -95,7 +98,9 @@ fun TvVideoPlayer(
 
     val exoPlayer = remember {
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(10_000, 30_000, 800, 1_500)
+            .setTargetBufferBytes(32 * 1024 * 1024) // Prevent 4K memory/GC freeze on Android TV
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .setBufferDurationsMs(8_000, 20_000, 750, 1_500)
             .build()
         ExoPlayer.Builder(context)
             .setLoadControl(loadControl)
@@ -108,12 +113,15 @@ fun TvVideoPlayer(
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
     var currentPosMs by remember { mutableLongStateOf(0L) }
+    var bufferedPosMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var osdVisible by remember { mutableStateOf(true) }
     var osdInteractionTick by remember { mutableLongStateOf(0L) }
     var showQualityDialog by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
     var lastSkippedUuid by remember { mutableStateOf<String?>(null) }
+    var lastPreparedVideoId by remember { mutableStateOf<String?>(null) }
+    var playbackErrorText by remember(videoId, quality?.videoUrl) { mutableStateOf<String?>(null) }
 
     val rootFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
@@ -133,17 +141,17 @@ fun TvVideoPlayer(
         }
     }
 
+    val activeErrorText = streamError ?: playbackErrorText
+
     // Handle Android TV Back button cleanly
     BackHandler {
         when {
             showQualityDialog -> showQualityDialog = false
             showSpeedDialog -> showSpeedDialog = false
-            osdVisible && streamError == null -> osdVisible = false
+            osdVisible && activeErrorText == null -> osdVisible = false
             else -> onExitPlayer()
         }
     }
-
-    var playbackErrorText by remember(quality?.videoUrl) { mutableStateOf<String?>(null) }
 
     // Listen to ExoPlayer events
     DisposableEffect(exoPlayer) {
@@ -170,16 +178,35 @@ fun TvVideoPlayer(
         }
     }
 
+    // Stop previous codec cleanly when changing video
+    LaunchedEffect(videoId) {
+        if (videoId != lastPreparedVideoId) {
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
+            currentPosMs = 0L
+            bufferedPosMs = 0L
+            durationMs = 0L
+            lastSkippedUuid = null
+        }
+    }
+
     // Prepare media source when quality/video changes
-    LaunchedEffect(quality?.videoUrl, quality?.audioUrl, quality?.userAgent, quality?.isHls) {
+    LaunchedEffect(videoId, quality?.videoUrl, quality?.audioUrl, quality?.userAgent, quality?.isHls) {
         val q = quality ?: return@LaunchedEffect
         playbackErrorText = null
-        val resumePos = if (exoPlayer.currentPosition > 1000L && exoPlayer.mediaItemCount > 0) {
+
+        val isSameVideoQualitySwitch = videoId != null && videoId == lastPreparedVideoId
+        val resumePos = if (isSameVideoQualitySwitch && exoPlayer.currentPosition > 1000L) {
             exoPlayer.currentPosition
         } else {
             0L
         }
+        lastPreparedVideoId = videoId
         lastSkippedUuid = null
+
+        // Flush existing codec before preparing a new (especially 4K) stream
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
 
         val dataSourceFactory = OkHttpDataSource.Factory(DownloaderImpl.getInstance().rawClient)
             .setUserAgent(q.userAgent ?: DownloaderImpl.USER_AGENT)
@@ -202,9 +229,12 @@ fun TvVideoPlayer(
             }
         }
 
-        exoPlayer.setMediaSource(mediaSource)
+        if (resumePos > 0L) {
+            exoPlayer.setMediaSource(mediaSource, resumePos)
+        } else {
+            exoPlayer.setMediaSource(mediaSource)
+        }
         exoPlayer.prepare()
-        if (resumePos > 0L) exoPlayer.seekTo(resumePos)
         exoPlayer.playWhenReady = true
         bumpOsd()
     }
@@ -217,6 +247,7 @@ fun TvVideoPlayer(
     LaunchedEffect(exoPlayer, sponsorSegments, sponsorBlockEnabled) {
         while (true) {
             currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
             durationMs = exoPlayer.duration.coerceAtLeast(0L)
 
             if (sponsorBlockEnabled && isPlaying && sponsorSegments.isNotEmpty()) {
@@ -248,19 +279,19 @@ fun TvVideoPlayer(
     }
 
     // Auto-hide TV OSD after 5s of idle when playing
-    LaunchedEffect(osdVisible, osdInteractionTick, isPlaying, showQualityDialog, showSpeedDialog, streamError) {
-        if (osdVisible && isPlaying && !showQualityDialog && !showSpeedDialog && streamError == null) {
+    LaunchedEffect(osdVisible, osdInteractionTick, isPlaying, showQualityDialog, showSpeedDialog, activeErrorText) {
+        if (osdVisible && isPlaying && !showQualityDialog && !showSpeedDialog && activeErrorText == null) {
             delay(5000L)
             osdVisible = false
         }
     }
 
     // Shift focus automatically between player root and OSD controls
-    LaunchedEffect(osdVisible, streamError) {
-        delay(50L)
+    LaunchedEffect(osdVisible, activeErrorText) {
+        delay(50)
         runCatching {
             when {
-                streamError != null -> retryFocusRequester.requestFocus()
+                activeErrorText != null -> retryFocusRequester.requestFocus()
                 osdVisible -> playPauseFocusRequester.requestFocus()
                 else -> rootFocusRequester.requestFocus()
             }
@@ -321,7 +352,7 @@ fun TvVideoPlayer(
                         true
                     }
                     else -> {
-                        if (!osdVisible && streamError == null) {
+                        if (!osdVisible && activeErrorText == null) {
                             when (event.key) {
                                 Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                                     if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -368,24 +399,30 @@ fun TvVideoPlayer(
                 .clickable { bumpOsd() }
         )
 
-        if (loadingStream || (isBuffering && streamError == null)) {
+        if (loadingStream || (isBuffering && activeErrorText == null)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(if (loadingStream) Color(0x8809090B) else Color.Transparent),
+                    .background(if (loadingStream) Color(0x6606070B) else Color.Transparent),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .glassPanel(shape = RoundedCornerShape(18.dp), elevated = true)
+                        .padding(horizontal = 24.dp, vertical = 18.dp)
+                ) {
                     CircularProgressIndicator(
-                        color = Color(0xFFF59E0B),
-                        modifier = Modifier.size(48.dp)
+                        color = GlassColors.AccentAmber,
+                        modifier = Modifier.size(42.dp)
                     )
                     if (loadingStream) {
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Resolving native stream...",
-                            color = Color(0xFFE4E4E7),
-                            fontSize = 16.sp
+                            text = "Resolving highest quality stream...",
+                            color = GlassColors.TextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
@@ -396,32 +433,28 @@ fun TvVideoPlayer(
             Text(
                 text = skipBannerText,
                 color = Color(0xFF09090B),
-                fontSize = 15.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(32.dp)
-                    .background(Color(0xFF34D399), RoundedCornerShape(10.dp))
+                    .background(Color(0xDD34D399), RoundedCornerShape(12.dp))
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             )
         }
-
-        val activeErrorText = streamError ?: playbackErrorText
 
         if (!activeErrorText.isNullOrBlank()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xDD09090B)),
+                    .background(Color(0xCC06070B)),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .widthIn(max = 580.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xFF111114))
-                        .border(1.dp, Color(0xFF27272A), RoundedCornerShape(18.dp))
+                        .widthIn(max = 600.dp)
+                        .glassPanel(shape = RoundedCornerShape(22.dp), elevated = true)
                         .padding(28.dp)
                 ) {
                     Text(
@@ -467,26 +500,34 @@ fun TvVideoPlayer(
             }
         }
 
-        // TV On-Screen Display (OSD)
+        // Detached Floating Liquid Glass TV OSD
         AnimatedVisibility(
             visible = osdVisible && activeErrorText == null,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // Top Info Bar
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to Color(0x7706070B),
+                            0.35f to Color.Transparent,
+                            0.65f to Color.Transparent,
+                            1.0f to Color(0x9906070B)
+                        )
+                    )
+                    .padding(horizontal = 32.dp, vertical = 24.dp)
+            ) {
+                // Top Detached Floating Glass Pill
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color(0xE609090B), Color.Transparent)
-                            )
-                        )
-                        .padding(horizontal = 36.dp, vertical = 26.dp)
+                        .glassPanel(shape = RoundedCornerShape(18.dp), fillColor = GlassColors.GlassHud)
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -497,20 +538,20 @@ fun TvVideoPlayer(
                             icon = Icons.AutoMirrored.Rounded.ArrowBack,
                             onClick = onExitPlayer
                         )
-                        Spacer(modifier = Modifier.width(18.dp))
+                        Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = title,
-                                color = Color(0xFFF4F4F5),
-                                fontSize = 22.sp,
+                                color = GlassColors.TextPrimary,
+                                fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = author,
-                                color = Color(0xFFA1A1AA),
-                                fontSize = 15.sp,
+                                color = GlassColors.TextSecondary,
+                                fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -519,214 +560,231 @@ fun TvVideoPlayer(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         quality?.let {
-                            Surface(
-                                color = Color(0xFF18181B),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Color(0xFF3F3F46))
+                            val badge = formatResolutionBadge(it.height, it.label)
+                            Box(
+                                modifier = Modifier
+                                    .glassPanel(shape = RoundedCornerShape(10.dp), highlighted = it.height >= 2160)
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Text(
-                                    text = it.label,
-                                    color = Color(0xFFF59E0B),
+                                    text = if (it.height >= 2160) "4K · ${it.label}" else badge,
+                                    color = GlassColors.AccentAmberSoft,
                                     fontSize = 13.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
                                 )
                             }
                         }
-                        Surface(
-                            color = Color(0xFF18181B),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, Color(0xFF3F3F46))
+                        Box(
+                            modifier = Modifier
+                                .glassPanel(shape = RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Text(
                                 text = "${playbackSpeed}x",
-                                color = Color(0xFFE4E4E7),
+                                color = GlassColors.TextPrimary,
                                 fontSize = 13.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                fontFamily = FontFamily.Monospace
                             )
                         }
                     }
                 }
 
-                // Bottom Control Bar + Timeline
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color(0xEC09090B), Color(0xF709090B))
-                            )
-                        )
-                        .padding(horizontal = 36.dp, vertical = 28.dp)
+                // Bottom Detached Floating Glass Control Dock
+                AnimatedVisibility(
+                    visible = true,
+                    enter = slideInVertically { it / 2 } + fadeIn(),
+                    exit = slideOutVertically { it / 2 } + fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
-                    // Non-focusable clean timeline bar with SponsorBlock segments
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .glassPanel(shape = RoundedCornerShape(22.dp), fillColor = GlassColors.GlassHud)
+                            .padding(horizontal = 22.dp, vertical = 18.dp)
                     ) {
-                        Text(
-                            text = formatMillis(currentPosMs),
-                            color = Color(0xFFE4E4E7),
-                            fontSize = 14.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.width(64.dp)
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(10.dp)
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(Color(0x553F3F46))
+                        // Sleek Glass Timeline Bar with Buffered + SponsorBlock markers
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            val progress = if (durationMs > 0L) {
-                                (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                            } else 0f
+                            Text(
+                                text = formatMillis(currentPosMs),
+                                color = GlassColors.TextPrimary,
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.width(64.dp)
+                            )
 
                             Box(
                                 modifier = Modifier
-                                    .fillMaxHeight()
-                                    .fillMaxWidth(progress)
-                                    .background(Color(0xFFF59E0B))
-                            )
+                                    .weight(1f)
+                                    .height(10.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(Color(0x33FFFFFF))
+                            ) {
+                                val bufProgress = if (durationMs > 0L) {
+                                    (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                                } else 0f
 
-                            if (sponsorBlockEnabled && durationMs > 0L && sponsorSegments.isNotEmpty()) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val durSec = durationMs / 1000f
-                                    for (seg in sponsorSegments) {
-                                        if (seg.segment.size == 2) {
-                                            val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
-                                            val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
-                                            drawRect(
-                                                color = Color(0xFF34D399),
-                                                topLeft = Offset(size.width * startFrac, 0f),
-                                                size = Size(
-                                                    (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
-                                                    size.height
-                                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(bufProgress)
+                                        .background(Color(0x44FFFFFF))
+                                )
+
+                                val progress = if (durationMs > 0L) {
+                                    (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                                } else 0f
+
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(progress)
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                listOf(GlassColors.AccentAmber, GlassColors.AccentAmberSoft)
                                             )
+                                        )
+                                )
+
+                                if (sponsorBlockEnabled && durationMs > 0L && sponsorSegments.isNotEmpty()) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val durSec = durationMs / 1000f
+                                        for (seg in sponsorSegments) {
+                                            if (seg.segment.size == 2) {
+                                                val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
+                                                val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
+                                                drawRect(
+                                                    color = GlassColors.AccentEmerald,
+                                                    topLeft = Offset(size.width * startFrac, 0f),
+                                                    size = Size(
+                                                        (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
+                                                        size.height
+                                                    )
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        Text(
-                            text = formatMillis(durationMs),
-                            color = Color(0xFFA1A1AA),
-                            fontSize = 14.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .width(64.dp)
-                                .padding(start = 10.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    // D-pad Focusable Transport & Settings Row
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TvActionButton(
-                                label = "Prev",
-                                icon = Icons.Rounded.SkipPrevious,
-                                onClick = {
-                                    onPrevious()
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "-10s",
-                                icon = Icons.Rounded.Replay10,
-                                onClick = {
-                                    exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = if (isPlaying) "Pause" else "Play",
-                                icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                highlighted = true,
-                                focusRequester = playPauseFocusRequester,
-                                onClick = {
-                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "+10s",
-                                icon = Icons.Rounded.Forward10,
-                                onClick = {
-                                    exoPlayer.seekTo(exoPlayer.currentPosition + 10_000L)
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "Next",
-                                icon = Icons.Rounded.SkipNext,
-                                onClick = {
-                                    onNext()
-                                    bumpOsd()
-                                }
+                            Text(
+                                text = formatMillis(durationMs),
+                                color = GlassColors.TextSecondary,
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .width(64.dp)
+                                    .padding(start = 10.dp)
                             )
                         }
 
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // D-pad Focusable Glass Transport & Quick-Settings Row
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            TvActionButton(
-                                label = quality?.label ?: "Quality",
-                                icon = Icons.Rounded.HighQuality,
-                                onClick = {
-                                    showQualityDialog = true
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "${playbackSpeed}x",
-                                icon = Icons.Rounded.Speed,
-                                onClick = {
-                                    showSpeedDialog = true
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "Sponsor",
-                                icon = Icons.Rounded.ContentCut,
-                                activeTint = if (sponsorBlockEnabled) Color(0xFF34D399) else null,
-                                onClick = {
-                                    onToggleSponsorBlock()
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "Shuffle",
-                                icon = Icons.Rounded.Shuffle,
-                                activeTint = if (shuffle) Color(0xFFF59E0B) else null,
-                                onClick = {
-                                    onToggleShuffle()
-                                    bumpOsd()
-                                }
-                            )
-                            TvActionButton(
-                                label = "Loop",
-                                icon = Icons.Rounded.Repeat,
-                                activeTint = if (loopQueue) Color(0xFFF59E0B) else null,
-                                onClick = {
-                                    onToggleLoop()
-                                    bumpOsd()
-                                }
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TvActionButton(
+                                    label = "Prev",
+                                    icon = Icons.Rounded.SkipPrevious,
+                                    onClick = {
+                                        onPrevious()
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "-10s",
+                                    icon = Icons.Rounded.Replay10,
+                                    onClick = {
+                                        exoPlayer.seekTo((exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L))
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = if (isPlaying) "Pause" else "Play",
+                                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    highlighted = true,
+                                    focusRequester = playPauseFocusRequester,
+                                    onClick = {
+                                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "+10s",
+                                    icon = Icons.Rounded.Forward10,
+                                    onClick = {
+                                        exoPlayer.seekTo(exoPlayer.currentPosition + 10_000L)
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "Next",
+                                    icon = Icons.Rounded.SkipNext,
+                                    onClick = {
+                                        onNext()
+                                        bumpOsd()
+                                    }
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TvActionButton(
+                                    label = quality?.let { formatResolutionBadge(it.height, it.label) } ?: "Quality",
+                                    icon = Icons.Rounded.HighQuality,
+                                    onClick = {
+                                        showQualityDialog = true
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "${playbackSpeed}x",
+                                    icon = Icons.Rounded.Speed,
+                                    onClick = {
+                                        showSpeedDialog = true
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "Sponsor",
+                                    icon = Icons.Rounded.ContentCut,
+                                    activeTint = if (sponsorBlockEnabled) GlassColors.AccentEmerald else null,
+                                    onClick = {
+                                        onToggleSponsorBlock()
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "Shuffle",
+                                    icon = Icons.Rounded.Shuffle,
+                                    activeTint = if (shuffle) GlassColors.AccentAmber else null,
+                                    onClick = {
+                                        onToggleShuffle()
+                                        bumpOsd()
+                                    }
+                                )
+                                TvActionButton(
+                                    label = "Loop",
+                                    icon = Icons.Rounded.Repeat,
+                                    activeTint = if (loopQueue) GlassColors.AccentAmber else null,
+                                    onClick = {
+                                        onToggleLoop()
+                                        bumpOsd()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -738,7 +796,8 @@ fun TvVideoPlayer(
         TvOptionPickerDialog(
             title = "Select Video Quality",
             options = qualities.map {
-                "${it.label}${if (it.isMuxed) " (Muxed)" else ""}" to (it == quality)
+                val tag = if (it.height >= 2160) " (4K UHD)" else if (it.isMuxed) " (Muxed)" else ""
+                "${it.label}$tag" to (it == quality)
             },
             onSelectIndex = { idx ->
                 qualities.getOrNull(idx)?.let(onSelectQuality)
@@ -778,18 +837,23 @@ fun TvActionButton(
     val scale by animateFloatAsState(if (focused) 1.07f else 1f)
     val bg by animateColorAsState(
         when {
-            focused -> Color(0xFFF59E0B)
-            highlighted -> Color(0xFF27272A)
-            else -> Color(0xFF18181B)
+            focused -> GlassColors.AccentAmber
+            highlighted -> Color(0x44F59E0B)
+            else -> Color(0x77161B29)
         }
     )
     val fg = when {
         focused -> Color(0xFF09090B)
         activeTint != null -> activeTint
-        else -> Color(0xFFF4F4F5)
+        highlighted -> GlassColors.AccentAmberSoft
+        else -> GlassColors.TextPrimary
     }
     val borderColor by animateColorAsState(
-        if (focused) Color(0xFFFDE68A) else Color(0xFF27272A)
+        when {
+            focused -> GlassColors.AccentAmberSoft
+            highlighted -> Color(0x88F59E0B)
+            else -> Color(0x33FFFFFF)
+        }
     )
 
     Row(
@@ -797,9 +861,9 @@ fun TvActionButton(
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .scale(scale)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(bg)
-            .border(if (focused) 2.dp else 1.dp, borderColor, RoundedCornerShape(10.dp))
+            .border(if (focused) 2.dp else 1.dp, borderColor, RoundedCornerShape(12.dp))
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)
@@ -809,14 +873,14 @@ fun TvActionButton(
                 imageVector = icon,
                 contentDescription = label,
                 tint = fg,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(19.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
         }
         Text(
             text = label,
             color = fg,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             fontWeight = if (focused || highlighted) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1
         )
@@ -834,14 +898,12 @@ private fun TvOptionPickerDialog(
         Column(
             modifier = Modifier
                 .widthIn(min = 320.dp, max = 420.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF111114))
-                .border(1.dp, Color(0xFF27272A), RoundedCornerShape(18.dp))
+                .glassPanel(shape = RoundedCornerShape(22.dp), elevated = true)
                 .padding(24.dp)
         ) {
             Text(
                 text = title,
-                color = Color(0xFFF4F4F5),
+                color = GlassColors.TextPrimary,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -858,12 +920,12 @@ private fun TvOptionPickerDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (focused) Color(0xFFF59E0B) else Color(0xFF18181B))
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (focused) GlassColors.AccentAmber else Color(0x77161B29))
                             .border(
                                 width = if (focused) 2.dp else 1.dp,
-                                color = if (focused) Color(0xFFFDE68A) else if (isSelected) Color(0xFFF59E0B) else Color(0xFF27272A),
-                                shape = RoundedCornerShape(10.dp)
+                                color = if (focused) GlassColors.AccentAmberSoft else if (isSelected) GlassColors.AccentAmber else Color(0x33FFFFFF),
+                                shape = RoundedCornerShape(12.dp)
                             )
                             .onFocusChanged { focused = it.isFocused }
                             .clickable { onSelectIndex(idx) }
@@ -871,7 +933,7 @@ private fun TvOptionPickerDialog(
                     ) {
                         Text(
                             text = label,
-                            color = if (focused) Color(0xFF09090B) else Color(0xFFF4F4F5),
+                            color = if (focused) Color(0xFF09090B) else GlassColors.TextPrimary,
                             fontSize = 16.sp,
                             fontWeight = if (isSelected || focused) FontWeight.Bold else FontWeight.Medium
                         )
@@ -879,7 +941,7 @@ private fun TvOptionPickerDialog(
                             Icon(
                                 imageVector = Icons.Rounded.Check,
                                 contentDescription = null,
-                                tint = if (focused) Color(0xFF09090B) else Color(0xFFF59E0B),
+                                tint = if (focused) Color(0xFF09090B) else GlassColors.AccentAmber,
                                 modifier = Modifier.size(18.dp)
                             )
                         }

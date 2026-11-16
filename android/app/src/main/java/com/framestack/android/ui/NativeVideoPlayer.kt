@@ -9,9 +9,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -33,6 +36,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -60,6 +64,8 @@ import kotlinx.coroutines.delay
 @OptIn(UnstableApi::class)
 @Composable
 fun NativeVideoPlayer(
+    videoId: String?,
+    videoTitle: String?,
     quality: QualityOption?,
     qualities: List<QualityOption>,
     sponsorSegments: List<SponsorSegment>,
@@ -89,7 +95,9 @@ fun NativeVideoPlayer(
 
     val exoPlayer = remember {
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(10_000, 30_000, 800, 1_500)
+            .setTargetBufferBytes(32 * 1024 * 1024) // Prevent 4K memory/GC freeze
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .setBufferDurationsMs(8_000, 20_000, 750, 1_500)
             .build()
         ExoPlayer.Builder(context)
             .setLoadControl(loadControl)
@@ -102,6 +110,7 @@ fun NativeVideoPlayer(
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
     var currentPosMs by remember { mutableLongStateOf(0L) }
+    var bufferedPosMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPosMs by remember { mutableLongStateOf(0L) }
@@ -114,6 +123,8 @@ fun NativeVideoPlayer(
     var showQualitySheet by remember { mutableStateOf(false) }
     var showSpeedSheet by remember { mutableStateOf(false) }
     var lastSkippedUuid by remember { mutableStateOf<String?>(null) }
+    var lastPreparedVideoId by remember { mutableStateOf<String?>(null) }
+    var playbackErrorText by remember(videoId, quality?.videoUrl) { mutableStateOf<String?>(null) }
 
     fun bumpControls() {
         controlsVisible = true
@@ -142,8 +153,6 @@ fun NativeVideoPlayer(
         onDispose {}
     }
 
-    var playbackErrorText by remember(quality?.videoUrl) { mutableStateOf<String?>(null) }
-
     // Listen for player state & completion
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -169,16 +178,35 @@ fun NativeVideoPlayer(
         }
     }
 
-    // Prepare adaptive MergingMediaSource, HLS, or muxed stream with matching client User-Agent
-    LaunchedEffect(quality?.videoUrl, quality?.audioUrl, quality?.userAgent, quality?.isHls) {
+    // Stop previous codec cleanly when switching videos so 4K decoder slots never deadlock
+    LaunchedEffect(videoId) {
+        if (videoId != lastPreparedVideoId) {
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
+            currentPosMs = 0L
+            bufferedPosMs = 0L
+            durationMs = 0L
+            lastSkippedUuid = null
+        }
+    }
+
+    // Prepare adaptive MergingMediaSource, HLS, or muxed stream cleanly
+    LaunchedEffect(videoId, quality?.videoUrl, quality?.audioUrl, quality?.userAgent, quality?.isHls) {
         val q = quality ?: return@LaunchedEffect
         playbackErrorText = null
-        val resumePos = if (exoPlayer.currentPosition > 1000L && exoPlayer.mediaItemCount > 0) {
+
+        val isSameVideoQualitySwitch = videoId != null && videoId == lastPreparedVideoId
+        val resumePos = if (isSameVideoQualitySwitch && exoPlayer.currentPosition > 1000L) {
             exoPlayer.currentPosition
         } else {
             0L
         }
+        lastPreparedVideoId = videoId
         lastSkippedUuid = null
+
+        // Flush existing codec before preparing a new (especially 4K) stream
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
 
         val dataSourceFactory = OkHttpDataSource.Factory(DownloaderImpl.getInstance().rawClient)
             .setUserAgent(q.userAgent ?: DownloaderImpl.USER_AGENT)
@@ -201,9 +229,12 @@ fun NativeVideoPlayer(
             }
         }
 
-        exoPlayer.setMediaSource(mediaSource)
+        if (resumePos > 0L) {
+            exoPlayer.setMediaSource(mediaSource, resumePos)
+        } else {
+            exoPlayer.setMediaSource(mediaSource)
+        }
         exoPlayer.prepare()
-        if (resumePos > 0L) exoPlayer.seekTo(resumePos)
         exoPlayer.playWhenReady = true
         bumpControls()
     }
@@ -218,6 +249,7 @@ fun NativeVideoPlayer(
             if (!isScrubbing) {
                 currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
             }
+            bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
             durationMs = exoPlayer.duration.coerceAtLeast(0L)
 
             if (sponsorBlockEnabled && isPlaying && sponsorSegments.isNotEmpty()) {
@@ -241,9 +273,11 @@ fun NativeVideoPlayer(
         }
     }
 
+    val activeErrorText = streamError ?: playbackErrorText
+
     // Auto-hide controls while playing
-    LaunchedEffect(controlsVisible, interactionTick, isPlaying, isScrubbing, showQualitySheet, showSpeedSheet, streamError) {
-        if (controlsVisible && isPlaying && !isScrubbing && !showQualitySheet && !showSpeedSheet && streamError == null) {
+    LaunchedEffect(controlsVisible, interactionTick, isPlaying, isScrubbing, showQualitySheet, showSpeedSheet, activeErrorText) {
+        if (controlsVisible && isPlaying && !isScrubbing && !showQualitySheet && !showSpeedSheet && activeErrorText == null) {
             delay(3400L)
             controlsVisible = false
         }
@@ -264,13 +298,21 @@ fun NativeVideoPlayer(
     }
 
     val displayedPosMs = if (isScrubbing) scrubPosMs else currentPosMs
+    val shape = if (isFullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(20.dp)
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
-            .clip(if (isFullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(16.dp))
+            .clip(shape)
             .background(Color.Black)
+            .then(
+                if (isFullscreen) Modifier else Modifier.border(
+                    1.dp,
+                    Brush.linearGradient(listOf(GlassColors.BorderTopLight, GlassColors.BorderMid)),
+                    shape
+                )
+            )
             .onSizeChanged { viewportWidthPx = it.width }
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -316,38 +358,43 @@ fun NativeVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Subtle loading indicator
-        if (loadingStream || (isBuffering && streamError == null)) {
-            CircularProgressIndicator(
-                color = Color(0xFFF59E0B),
-                strokeWidth = 3.dp,
-                modifier = Modifier.size(38.dp)
-            )
+        // Frosted loading badge
+        if (loadingStream || (isBuffering && activeErrorText == null)) {
+            Box(
+                modifier = Modifier
+                    .glassPanel(shape = CircleShape, elevated = true)
+                    .padding(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = GlassColors.AccentAmber,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
         }
 
-        // Double-tap seek feedback pill
+        // Double-tap seek feedback glass pill
         AnimatedVisibility(
             visible = seekFeedbackText != null,
             enter = fadeIn() + scaleIn(initialScale = 0.85f),
             exit = fadeOut() + scaleOut(targetScale = 0.9f)
         ) {
-            Surface(
-                color = Color(0xCC09090B),
-                shape = RoundedCornerShape(24.dp),
-                border = BorderStroke(1.dp, Color(0x55F59E0B))
+            Box(
+                modifier = Modifier
+                    .glassPanel(shape = RoundedCornerShape(24.dp), highlighted = true)
+                    .padding(horizontal = 20.dp, vertical = 9.dp)
             ) {
                 Text(
                     text = seekFeedbackText.orEmpty(),
-                    color = Color(0xFFFDE68A),
+                    color = GlassColors.AccentAmberSoft,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }
 
-        // SponsorBlock skipped notification
+        // SponsorBlock skipped glass pill
         AnimatedVisibility(
             visible = !skipBannerText.isNullOrBlank(),
             enter = fadeIn(),
@@ -357,32 +404,34 @@ fun NativeVideoPlayer(
                 .padding(12.dp)
         ) {
             Surface(
-                color = Color(0xFF34D399),
-                shape = RoundedCornerShape(8.dp)
+                color = Color(0xCC34D399),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Color(0x88FFFFFF))
             ) {
                 Text(
                     text = skipBannerText.orEmpty(),
                     color = Color(0xFF09090B),
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                 )
             }
         }
 
-        val activeErrorText = streamError ?: playbackErrorText
-
-        // Stream Error Overlay with Sign In & Retry
+        // Stream Error Glass Overlay with Sign In & Retry
         if (!activeErrorText.isNullOrBlank()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xE009090B)),
+                    .background(Color(0xCC06070B)),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 24.dp)
+                    modifier = Modifier
+                        .padding(horizontal = 20.dp)
+                        .glassPanel(shape = RoundedCornerShape(18.dp), elevated = true)
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
                 ) {
                     Text(
                         text = activeErrorText,
@@ -396,7 +445,7 @@ fun NativeVideoPlayer(
                             Button(
                                 onClick = onOpenSignIn,
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFF59E0B),
+                                    containerColor = GlassColors.AccentAmber,
                                     contentColor = Color(0xFF09090B)
                                 ),
                                 shape = RoundedCornerShape(10.dp),
@@ -413,8 +462,8 @@ fun NativeVideoPlayer(
                                 onRetry()
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isLoginRequired) Color(0xFF27272A) else Color(0xFFF59E0B),
-                                contentColor = if (isLoginRequired) Color(0xFFF4F4F5) else Color(0xFF09090B)
+                                containerColor = if (isLoginRequired) Color(0xFF27272A) else GlassColors.AccentAmber,
+                                contentColor = if (isLoginRequired) GlassColors.TextPrimary else Color(0xFF09090B)
                             ),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
@@ -428,7 +477,7 @@ fun NativeVideoPlayer(
             }
         }
 
-        // Sleek Translucent OSD Controls
+        // Modern Floating Liquid Glass HUD
         AnimatedVisibility(
             visible = controlsVisible && activeErrorText == null,
             enter = fadeIn(),
@@ -439,28 +488,32 @@ fun NativeVideoPlayer(
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            0.0f to Color(0xAA09090B),
-                            0.35f to Color(0x3309090B),
-                            0.65f to Color(0x3309090B),
-                            1.0f to Color(0xD809090B)
+                            0.0f to Color(0x8806070B),
+                            0.35f to Color.Transparent,
+                            0.65f to Color.Transparent,
+                            1.0f to Color(0xAA06070B)
                         )
                     )
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .padding(horizontal = 10.dp, vertical = 10.dp)
             ) {
-                // Top quick-setting pills
+                // Top Floating Glass Pill Bar
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
+                        .glassPanel(shape = RoundedCornerShape(14.dp), fillColor = GlassColors.GlassHud)
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
                     ) {
+                        val badgeLabel = quality?.let { formatResolutionBadge(it.height, it.label) } ?: "Auto"
                         PlayerOverlayPill(
-                            text = quality?.label ?: "Auto",
+                            text = badgeLabel,
                             highlighted = true,
                             onClick = {
                                 showQualitySheet = true
@@ -476,13 +529,24 @@ fun NativeVideoPlayer(
                             }
                         )
                         PlayerOverlayPill(
-                            text = if (sponsorBlockEnabled) "SB On" else "SB Off",
-                            accentColor = if (sponsorBlockEnabled) Color(0xFF34D399) else Color(0xFFA1A1AA),
+                            text = if (sponsorBlockEnabled) "SB" else "SB Off",
+                            accentColor = if (sponsorBlockEnabled) GlassColors.AccentEmerald else GlassColors.TextSecondary,
                             onClick = {
                                 onToggleSponsorBlock()
                                 bumpControls()
                             }
                         )
+                        if (isFullscreen && !videoTitle.isNullOrBlank()) {
+                            Text(
+                                text = videoTitle,
+                                color = GlassColors.TextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 6.dp)
+                            )
+                        }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -491,13 +555,13 @@ fun NativeVideoPlayer(
                                 onToggleShuffle()
                                 bumpControls()
                             },
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 Icons.Rounded.Shuffle,
                                 contentDescription = "Shuffle",
-                                tint = if (shuffle) Color(0xFFF59E0B) else Color(0xFFD4D4D8),
-                                modifier = Modifier.size(18.dp)
+                                tint = if (shuffle) GlassColors.AccentAmber else Color(0xFFD4D4D8),
+                                modifier = Modifier.size(17.dp)
                             )
                         }
                         IconButton(
@@ -505,13 +569,13 @@ fun NativeVideoPlayer(
                                 onToggleLoop()
                                 bumpControls()
                             },
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 Icons.Rounded.Repeat,
                                 contentDescription = "Loop",
-                                tint = if (loopQueue) Color(0xFFF59E0B) else Color(0xFFD4D4D8),
-                                modifier = Modifier.size(18.dp)
+                                tint = if (loopQueue) GlassColors.AccentAmber else Color(0xFFD4D4D8),
+                                modifier = Modifier.size(17.dp)
                             )
                         }
                         IconButton(
@@ -519,157 +583,179 @@ fun NativeVideoPlayer(
                                 onToggleFullscreen()
                                 bumpControls()
                             },
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 imageVector = if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
                                 contentDescription = "Fullscreen",
                                 tint = Color.White,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     }
                 }
 
-                // Center Play / Pause / Skip cluster
+                // Center Luminous Glass Transport Cluster
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(22.dp),
                     modifier = Modifier.align(Alignment.Center)
                 ) {
-                    IconButton(
-                        onClick = {
-                            onPrevious()
-                            bumpControls()
-                        },
+                    Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x6609090B))
+                            .size(42.dp)
+                            .glassPanel(shape = CircleShape, fillColor = GlassColors.GlassHud)
+                            .clickable {
+                                onPrevious()
+                                bumpControls()
+                            }
                     ) {
                         Icon(
                             Icons.Rounded.SkipPrevious,
                             contentDescription = "Previous",
                             tint = Color.White,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
-                    Surface(
-                        onClick = {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                            bumpControls()
-                        },
-                        shape = CircleShape,
-                        color = Color(0xFFF59E0B),
-                        contentColor = Color(0xFF09090B),
-                        modifier = Modifier.size(54.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                modifier = Modifier.size(30.dp)
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(GlassColors.AccentAmberSoft, GlassColors.AccentAmber)
+                                )
                             )
-                        }
+                            .border(1.5.dp, Color(0x99FFFFFF), CircleShape)
+                            .clickable {
+                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                bumpControls()
+                            }
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color(0xFF09090B),
+                            modifier = Modifier.size(30.dp)
+                        )
                     }
 
-                    IconButton(
-                        onClick = {
-                            onNext()
-                            bumpControls()
-                        },
+                    Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x6609090B))
+                            .size(42.dp)
+                            .glassPanel(shape = CircleShape, fillColor = GlassColors.GlassHud)
+                            .clickable {
+                                onNext()
+                                bumpControls()
+                            }
                     ) {
                         Icon(
                             Icons.Rounded.SkipNext,
                             contentDescription = "Next",
                             tint = Color.White,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
 
-                // Bottom Timeline + Timestamps
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
+                // Bottom Detached Floating Glass Control Dock
+                AnimatedVisibility(
+                    visible = true,
+                    enter = slideInVertically { it / 2 } + fadeIn(),
+                    exit = slideOutVertically { it / 2 } + fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
-                    Text(
-                        text = formatMillis(displayedPosMs),
-                        color = Color(0xFFF4F4F5),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.width(44.dp)
-                    )
-
-                    Box(
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .weight(1f)
-                            .height(28.dp),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .glassPanel(shape = RoundedCornerShape(16.dp), fillColor = GlassColors.GlassHud)
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
                     ) {
-                        if (sponsorBlockEnabled && durationMs > 0L && sponsorSegments.isNotEmpty()) {
+                        Text(
+                            text = formatMillis(displayedPosMs),
+                            color = GlassColors.TextPrimary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.width(44.dp)
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(28.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Buffered track + SponsorBlock markers behind Slider thumb
                             Canvas(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(4.dp)
                             ) {
-                                val durSec = durationMs / 1000f
-                                for (seg in sponsorSegments) {
-                                    if (seg.segment.size == 2) {
-                                        val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
-                                        val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
-                                        drawRect(
-                                            color = Color(0xFF34D399),
-                                            topLeft = Offset(size.width * startFrac, 0f),
-                                            size = Size(
-                                                (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
-                                                size.height
-                                            )
-                                        )
+                                if (durationMs > 0L) {
+                                    val bufFrac = (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                                    drawRect(
+                                        color = Color(0x44FFFFFF),
+                                        topLeft = Offset.Zero,
+                                        size = Size(size.width * bufFrac, size.height)
+                                    )
+                                    if (sponsorBlockEnabled && sponsorSegments.isNotEmpty()) {
+                                        val durSec = durationMs / 1000f
+                                        for (seg in sponsorSegments) {
+                                            if (seg.segment.size == 2) {
+                                                val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
+                                                val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
+                                                drawRect(
+                                                    color = GlassColors.AccentEmerald,
+                                                    topLeft = Offset(size.width * startFrac, 0f),
+                                                    size = Size(
+                                                        (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
+                                                        size.height
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
+
+                            Slider(
+                                value = if (durationMs > 0L) displayedPosMs.toFloat() else 0f,
+                                onValueChange = {
+                                    isScrubbing = true
+                                    scrubPosMs = it.toLong()
+                                    interactionTick++
+                                },
+                                onValueChangeFinished = {
+                                    exoPlayer.seekTo(scrubPosMs)
+                                    currentPosMs = scrubPosMs
+                                    isScrubbing = false
+                                    bumpControls()
+                                },
+                                valueRange = 0f..(if (durationMs > 0L) durationMs.toFloat() else 1f),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = GlassColors.AccentAmberSoft,
+                                    activeTrackColor = GlassColors.AccentAmber,
+                                    inactiveTrackColor = Color(0x33FFFFFF)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
 
-                        Slider(
-                            value = if (durationMs > 0L) displayedPosMs.toFloat() else 0f,
-                            onValueChange = {
-                                isScrubbing = true
-                                scrubPosMs = it.toLong()
-                                interactionTick++
-                            },
-                            onValueChangeFinished = {
-                                exoPlayer.seekTo(scrubPosMs)
-                                currentPosMs = scrubPosMs
-                                isScrubbing = false
-                                bumpControls()
-                            },
-                            valueRange = 0f..(if (durationMs > 0L) durationMs.toFloat() else 1f),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFFF59E0B),
-                                activeTrackColor = Color(0xFFF59E0B),
-                                inactiveTrackColor = Color(0x66FFFFFF)
-                            ),
-                            modifier = Modifier.fillMaxWidth()
+                        Text(
+                            text = formatMillis(durationMs),
+                            color = GlassColors.TextSecondary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .width(44.dp)
+                                .padding(start = 6.dp)
                         )
                     }
-
-                    Text(
-                        text = formatMillis(durationMs),
-                        color = Color(0xFFD4D4D8),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier
-                            .width(44.dp)
-                            .padding(start = 6.dp)
-                    )
                 }
             }
         }
@@ -678,21 +764,22 @@ fun NativeVideoPlayer(
     if (showQualitySheet) {
         ModalBottomSheet(
             onDismissRequest = { showQualitySheet = false },
-            containerColor = Color(0xFF111114),
-            contentColor = Color(0xFFF4F4F5)
+            containerColor = Color(0xEB10141E),
+            contentColor = GlassColors.TextPrimary
         ) {
             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("Video Quality", fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(10.dp))
                 qualities.forEach { option ->
                     val selected = option == quality
+                    val tag = if (option.height >= 2160) " · 4K UHD" else if (option.isMuxed) " · Muxed" else ""
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (selected) Color(0x22F59E0B) else Color.Transparent)
+                            .padding(vertical = 3.dp)
+                            .glassPanel(shape = RoundedCornerShape(12.dp), highlighted = selected)
                             .clickable {
                                 onSelectQuality(option)
                                 showQualitySheet = false
@@ -700,13 +787,13 @@ fun NativeVideoPlayer(
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         Text(
-                            text = "${option.label}${if (option.isMuxed) " · Muxed" else ""}",
-                            color = if (selected) Color(0xFFFDE68A) else Color(0xFFE4E4E7),
+                            text = "${option.label}$tag",
+                            color = if (selected) GlassColors.AccentAmberSoft else GlassColors.TextPrimary,
                             fontSize = 15.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                         )
                         if (selected) {
-                            Icon(Icons.Rounded.Check, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = GlassColors.AccentAmber, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -719,8 +806,8 @@ fun NativeVideoPlayer(
         val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
         ModalBottomSheet(
             onDismissRequest = { showSpeedSheet = false },
-            containerColor = Color(0xFF111114),
-            contentColor = Color(0xFFF4F4F5)
+            containerColor = Color(0xEB10141E),
+            contentColor = GlassColors.TextPrimary
         ) {
             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("Playback Speed", fontSize = 17.sp, fontWeight = FontWeight.Bold)
@@ -732,8 +819,8 @@ fun NativeVideoPlayer(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (selected) Color(0x22F59E0B) else Color.Transparent)
+                            .padding(vertical = 3.dp)
+                            .glassPanel(shape = RoundedCornerShape(12.dp), highlighted = selected)
                             .clickable {
                                 onSetSpeed(spd)
                                 showSpeedSheet = false
@@ -742,12 +829,12 @@ fun NativeVideoPlayer(
                     ) {
                         Text(
                             text = if (spd == 1.0f) "1.0x (Normal)" else "${spd}x",
-                            color = if (selected) Color(0xFFFDE68A) else Color(0xFFE4E4E7),
+                            color = if (selected) GlassColors.AccentAmberSoft else GlassColors.TextPrimary,
                             fontSize = 15.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                         )
                         if (selected) {
-                            Icon(Icons.Rounded.Check, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Rounded.Check, contentDescription = null, tint = GlassColors.AccentAmber, modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -764,22 +851,18 @@ private fun PlayerOverlayPill(
     accentColor: Color? = null,
     onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        color = Color(0x99111114),
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (highlighted) Color(0x99F59E0B) else Color(0x44FFFFFF)
-        )
+    Box(
+        modifier = Modifier
+            .glassPanel(shape = RoundedCornerShape(9.dp), highlighted = highlighted)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 4.dp)
     ) {
         Text(
             text = text,
-            color = accentColor ?: if (highlighted) Color(0xFFFBBF24) else Color(0xFFF4F4F5),
+            color = accentColor ?: if (highlighted) GlassColors.AccentAmberSoft else GlassColors.TextPrimary,
             fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
         )
     }
 }
