@@ -1,11 +1,5 @@
 package com.framestack.android.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,9 +17,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.framestack.android.R
 import com.framestack.android.data.VideoItem
 import com.framestack.android.data.VideoSource
@@ -44,16 +39,7 @@ fun MainScreen(viewModel: PlayerViewModel) {
     var showAddDialog by remember { mutableStateOf(false) }
     var showSignInDialog by remember { mutableStateOf(false) }
     var showSideMenu by rememberSaveable { mutableStateOf(true) }
-    var queueQuery by remember { mutableStateOf("") }
     var showDescription by remember { mutableStateOf(false) }
-
-    val filteredQueue = remember(state.queue, queueQuery) {
-        val q = queueQuery.trim().lowercase()
-        if (q.isEmpty()) state.queue
-        else state.queue.filter {
-            it.title.lowercase().contains(q) || it.author.lowercase().contains(q)
-        }
-    }
 
     GlassBackdrop {
         Scaffold(
@@ -202,7 +188,6 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                 .padding(top = 10.dp)
                                 .glassPanel(shape = RoundedCornerShape(16.dp))
                                 .clickable(enabled = description.isNotBlank()) { showDescription = !showDescription }
-                                .animateContentSize()
                                 .padding(horizontal = 14.dp, vertical = 12.dp)
                         ) {
                             Row(
@@ -289,22 +274,25 @@ fun MainScreen(viewModel: PlayerViewModel) {
                         }
                     }
 
-                    // Collapsible Sources & Queue Menu
-                    AnimatedVisibility(
-                        visible = showSideMenu,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut(),
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Column(modifier = Modifier.fillMaxSize()) {
+                    // Instant Collapsible Sources & Queue Menu (no layout-thrashing expand animation)
+                    if (showSideMenu) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) {
                             // Channels & Playlists Strip
                             LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 10.dp, bottom = 4.dp)
+                                    .padding(top = 10.dp, bottom = 6.dp)
                             ) {
-                                items(state.sources, key = { it.id }) { source ->
+                                items(
+                                    items = state.sources,
+                                    key = { it.id },
+                                    contentType = { "source_chip" }
+                                ) { source ->
                                     val active = source.id == state.activeSourceId
                                     SourceChip(
                                         source = source,
@@ -315,47 +303,28 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                 }
                             }
 
-                            // Queue Search + Refresh
+                            // Compact Queue Header + Refresh
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 8.dp, bottom = 8.dp)
+                                    .padding(top = 4.dp, bottom = 8.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = queueQuery,
-                                    onValueChange = { queueQuery = it },
-                                    placeholder = { Text("Search ${state.queue.size} videos...", fontSize = 13.sp, color = GlassColors.TextMuted) },
-                                    leadingIcon = {
-                                        Icon(Icons.Rounded.Search, contentDescription = null, tint = GlassColors.TextMuted, modifier = Modifier.size(18.dp))
-                                    },
-                                    trailingIcon = {
-                                        if (queueQuery.isNotEmpty()) {
-                                            IconButton(onClick = { queueQuery = "" }, modifier = Modifier.size(28.dp)) {
-                                                Icon(Icons.Rounded.Close, contentDescription = "Clear", tint = GlassColors.TextMuted, modifier = Modifier.size(16.dp))
-                                            }
-                                        }
-                                    },
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = GlassColors.AccentAmber,
-                                        unfocusedBorderColor = Color(0x28FFFFFF),
-                                        focusedTextColor = GlassColors.TextPrimary,
-                                        unfocusedTextColor = GlassColors.TextPrimary,
-                                        focusedContainerColor = GlassColors.GlassSurface,
-                                        unfocusedContainerColor = GlassColors.GlassSurface
-                                    ),
-                                    shape = RoundedCornerShape(14.dp),
-                                    modifier = Modifier.weight(1f)
+                                Text(
+                                    text = "UP NEXT · ${state.queue.size} VIDEOS",
+                                    color = GlassColors.TextMuted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 0.8.sp
                                 )
-
-                                Spacer(modifier = Modifier.width(8.dp))
 
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
-                                        .size(50.dp)
-                                        .glassPanel(shape = RoundedCornerShape(14.dp))
+                                        .size(34.dp)
+                                        .glassPanel(shape = RoundedCornerShape(10.dp))
                                         .clickable {
                                             state.sources.firstOrNull { it.id == state.activeSourceId }
                                                 ?.let { viewModel.selectSource(it, forceRefresh = true) }
@@ -365,7 +334,7 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                         Icons.Rounded.Refresh,
                                         contentDescription = "Refresh source",
                                         tint = GlassColors.TextPrimary,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(17.dp)
                                     )
                                 }
                             }
@@ -422,7 +391,11 @@ fun MainScreen(viewModel: PlayerViewModel) {
                                             verticalArrangement = Arrangement.spacedBy(8.dp),
                                             contentPadding = PaddingValues(bottom = 24.dp)
                                         ) {
-                                            itemsIndexed(filteredQueue, key = { _, item -> item.videoId }) { index, video ->
+                                            itemsIndexed(
+                                                items = state.queue,
+                                                key = { _, item -> item.videoId },
+                                                contentType = { _, _ -> "queue_row" }
+                                            ) { index, video ->
                                                 QueueRow(
                                                     index = index + 1,
                                                     video = video,
@@ -460,9 +433,15 @@ fun MainScreen(viewModel: PlayerViewModel) {
     if (showSignInDialog) {
         YouTubeSignInDialog(
             isSignedIn = state.isSignedIn,
+            authManager = viewModel.authManager,
+            defaultToPairCode = false,
             onSignedIn = { cookies ->
                 showSignInDialog = false
                 viewModel.onYouTubeCookiesSaved(cookies)
+            },
+            onOAuthSignedIn = {
+                showSignInDialog = false
+                viewModel.onOAuthSignedIn()
             },
             onSignOut = {
                 viewModel.signOutYouTube()
@@ -513,6 +492,9 @@ private fun SourceChip(
     }
 }
 
+private val QueueRowShape = RoundedCornerShape(15.dp)
+private val QueueThumbShape = RoundedCornerShape(10.dp)
+
 @Composable
 private fun QueueRow(
     index: Int,
@@ -520,11 +502,20 @@ private fun QueueRow(
     active: Boolean,
     onClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val thumbRequest = remember(video.thumbnailUrl) {
+        ImageRequest.Builder(context)
+            .data(video.thumbnailUrl)
+            .size(320, 180)
+            .crossfade(false)
+            .build()
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .glassPanel(shape = RoundedCornerShape(15.dp), highlighted = active)
+            .glassPanel(shape = QueueRowShape, highlighted = active)
             .clickable(onClick = onClick)
             .padding(10.dp)
     ) {
@@ -532,11 +523,11 @@ private fun QueueRow(
             modifier = Modifier
                 .width(114.dp)
                 .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(QueueThumbShape)
                 .background(Color(0xFF141822))
         ) {
             AsyncImage(
-                model = video.thumbnailUrl,
+                model = thumbRequest,
                 contentDescription = video.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

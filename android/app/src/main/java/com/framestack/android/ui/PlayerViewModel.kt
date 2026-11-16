@@ -55,11 +55,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     )
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
+    val authManager get() = repository.authManager
+
     private var feedJob: Job? = null
     private var streamJob: Job? = null
     private var prefetchJob: Job? = null
 
     init {
+        viewModelScope.launch { repository.warmUp() }
         val initialSources = repository.loadSources()
         _uiState.update { it.copy(sources = initialSources) }
         initialSources.firstOrNull()?.let { selectSource(it) }
@@ -71,20 +74,29 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         forceRefresh: Boolean = false
     ) {
         feedJob?.cancel()
+        val cachedFeed = if (!forceRefresh) repository.getCachedFeed(source.id).orEmpty() else emptyList()
+        val hasCached = cachedFeed.isNotEmpty()
+        val shouldPlayCachedImmediately = autoPlay && hasCached
+
         _uiState.update {
             it.copy(
                 activeSourceId = source.id,
-                loadingQueue = true,
+                loadingQueue = !hasCached,
                 queueError = null,
-                queue = emptyList(),
-                activeVideo = if (autoPlay) null else it.activeVideo,
+                queue = cachedFeed,
+                activeVideo = if (shouldPlayCachedImmediately) cachedFeed.first() else if (autoPlay) null else it.activeVideo,
                 resolvedStreams = if (autoPlay) null else it.resolvedStreams,
                 selectedQuality = if (autoPlay) null else it.selectedQuality,
                 isLoginRequired = false
             )
         }
+
+        if (shouldPlayCachedImmediately) {
+            playVideo(cachedFeed.first())
+        }
+
         feedJob = viewModelScope.launch {
-            var startedPreviewPlay = false
+            var startedPreviewPlay = shouldPlayCachedImmediately
             repository.fetchSourceVideos(
                 source = source,
                 forceRefresh = forceRefresh,
@@ -178,6 +190,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onYouTubeCookiesSaved(rawCookies: String) {
         repository.authManager.saveCookies(rawCookies)
+        refreshAuthSession()
+    }
+
+    fun onOAuthSignedIn() {
+        refreshAuthSession()
+    }
+
+    private fun refreshAuthSession() {
         repository.clearStreamCache()
         _uiState.update {
             it.copy(

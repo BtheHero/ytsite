@@ -5,12 +5,8 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,7 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -112,9 +107,6 @@ fun TvVideoPlayer(
 
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
-    var currentPosMs by remember { mutableLongStateOf(0L) }
-    var bufferedPosMs by remember { mutableLongStateOf(0L) }
-    var durationMs by remember { mutableLongStateOf(0L) }
     var osdVisible by remember { mutableStateOf(true) }
     var osdInteractionTick by remember { mutableLongStateOf(0L) }
     var showQualityDialog by remember { mutableStateOf(false) }
@@ -183,9 +175,6 @@ fun TvVideoPlayer(
         if (videoId != lastPreparedVideoId) {
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
-            currentPosMs = 0L
-            bufferedPosMs = 0L
-            durationMs = 0L
             lastSkippedUuid = null
         }
     }
@@ -243,33 +232,18 @@ fun TvVideoPlayer(
         exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
     }
 
-    // Poll progress and enforce SponsorBlock skips
-    LaunchedEffect(exoPlayer, sponsorSegments, sponsorBlockEnabled) {
-        while (true) {
-            currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
-            durationMs = exoPlayer.duration.coerceAtLeast(0L)
-
-            if (sponsorBlockEnabled && isPlaying && sponsorSegments.isNotEmpty()) {
-                val sec = currentPosMs / 1000.0
-                val hit = sponsorSegments.firstOrNull { seg ->
-                    seg.segment.size == 2 && sec >= seg.segment[0] && sec < seg.segment[1] - 0.6
-                }
-                if (hit != null && hit.UUID != lastSkippedUuid) {
-                    lastSkippedUuid = hit.UUID
-                    val targetMs = (hit.segment[1] * 1000.0).toLong()
-                    exoPlayer.seekTo(targetMs)
-                    val label = when (hit.category) {
-                        "selfpromo" -> "Skipped self-promotion"
-                        "interaction" -> "Skipped interaction reminder"
-                        else -> "Skipped sponsor segment"
-                    }
-                    onSkipBanner(label)
-                }
-            }
-            delay(250L)
+    // Isolated SponsorBlock monitor
+    TvSponsorBlockMonitor(
+        exoPlayer = exoPlayer,
+        isPlaying = isPlaying,
+        sponsorSegments = sponsorSegments,
+        sponsorBlockEnabled = sponsorBlockEnabled,
+        lastSkippedUuid = lastSkippedUuid,
+        onSkipped = { uuid, label ->
+            lastSkippedUuid = uuid
+            onSkipBanner(label)
         }
-    }
+    )
 
     LaunchedEffect(skipBannerText) {
         if (skipBannerText != null) {
@@ -386,6 +360,7 @@ fun TvVideoPlayer(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     useController = false
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                     player = exoPlayer
                 }
             },
@@ -591,97 +566,21 @@ fun TvVideoPlayer(
                 }
 
                 // Bottom Detached Floating Glass Control Dock
-                AnimatedVisibility(
-                    visible = true,
-                    enter = slideInVertically { it / 2 } + fadeIn(),
-                    exit = slideOutVertically { it / 2 } + fadeOut(),
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .glassPanel(shape = RoundedCornerShape(22.dp), fillColor = GlassColors.GlassHud)
+                        .padding(horizontal = 22.dp, vertical = 18.dp)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .glassPanel(shape = RoundedCornerShape(22.dp), fillColor = GlassColors.GlassHud)
-                            .padding(horizontal = 22.dp, vertical = 18.dp)
-                    ) {
-                        // Sleek Glass Timeline Bar with Buffered + SponsorBlock markers
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = formatMillis(currentPosMs),
-                                color = GlassColors.TextPrimary,
-                                fontSize = 14.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.width(64.dp)
-                            )
+                    TvTimelineSection(
+                        exoPlayer = exoPlayer,
+                        videoId = videoId,
+                        sponsorSegments = sponsorSegments,
+                        sponsorBlockEnabled = sponsorBlockEnabled
+                    )
 
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(10.dp)
-                                    .clip(RoundedCornerShape(5.dp))
-                                    .background(Color(0x33FFFFFF))
-                            ) {
-                                val bufProgress = if (durationMs > 0L) {
-                                    (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                                } else 0f
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .fillMaxWidth(bufProgress)
-                                        .background(Color(0x44FFFFFF))
-                                )
-
-                                val progress = if (durationMs > 0L) {
-                                    (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                                } else 0f
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .fillMaxWidth(progress)
-                                        .background(
-                                            Brush.horizontalGradient(
-                                                listOf(GlassColors.AccentAmber, GlassColors.AccentAmberSoft)
-                                            )
-                                        )
-                                )
-
-                                if (sponsorBlockEnabled && durationMs > 0L && sponsorSegments.isNotEmpty()) {
-                                    Canvas(modifier = Modifier.fillMaxSize()) {
-                                        val durSec = durationMs / 1000f
-                                        for (seg in sponsorSegments) {
-                                            if (seg.segment.size == 2) {
-                                                val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
-                                                val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
-                                                drawRect(
-                                                    color = GlassColors.AccentEmerald,
-                                                    topLeft = Offset(size.width * startFrac, 0f),
-                                                    size = Size(
-                                                        (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
-                                                        size.height
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = formatMillis(durationMs),
-                                color = GlassColors.TextSecondary,
-                                fontSize = 14.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier
-                                    .width(64.dp)
-                                    .padding(start = 10.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                         // D-pad Focusable Glass Transport & Quick-Settings Row
                         Row(
@@ -824,6 +723,137 @@ fun TvVideoPlayer(
 }
 
 @Composable
+private fun TvSponsorBlockMonitor(
+    exoPlayer: ExoPlayer,
+    isPlaying: Boolean,
+    sponsorSegments: List<SponsorSegment>,
+    sponsorBlockEnabled: Boolean,
+    lastSkippedUuid: String?,
+    onSkipped: (uuid: String, label: String) -> Unit
+) {
+    LaunchedEffect(exoPlayer, isPlaying, sponsorSegments, sponsorBlockEnabled, lastSkippedUuid) {
+        if (!sponsorBlockEnabled || !isPlaying || sponsorSegments.isEmpty()) return@LaunchedEffect
+        while (true) {
+            val sec = exoPlayer.currentPosition / 1000.0
+            val hit = sponsorSegments.firstOrNull { seg ->
+                seg.segment.size == 2 && sec >= seg.segment[0] && sec < seg.segment[1] - 0.6
+            }
+            if (hit != null && hit.UUID != lastSkippedUuid) {
+                val targetMs = (hit.segment[1] * 1000.0).toLong()
+                exoPlayer.seekTo(targetMs)
+                val label = when (hit.category) {
+                    "selfpromo" -> "Skipped self-promotion"
+                    "interaction" -> "Skipped interaction reminder"
+                    else -> "Skipped sponsor segment"
+                }
+                onSkipped(hit.UUID, label)
+                break
+            }
+            delay(350L)
+        }
+    }
+}
+
+@Composable
+private fun TvTimelineSection(
+    exoPlayer: ExoPlayer,
+    videoId: String?,
+    sponsorSegments: List<SponsorSegment>,
+    sponsorBlockEnabled: Boolean
+) {
+    var currentPosMs by remember(videoId) { mutableLongStateOf(exoPlayer.currentPosition.coerceAtLeast(0L)) }
+    var bufferedPosMs by remember(videoId) { mutableLongStateOf(exoPlayer.bufferedPosition.coerceAtLeast(0L)) }
+    var durationMs by remember(videoId) { mutableLongStateOf(exoPlayer.duration.coerceAtLeast(0L)) }
+
+    LaunchedEffect(exoPlayer, videoId) {
+        while (true) {
+            currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+            durationMs = exoPlayer.duration.coerceAtLeast(0L)
+            delay(250L)
+        }
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = formatMillis(currentPosMs),
+            color = GlassColors.TextPrimary,
+            fontSize = 14.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(64.dp)
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(10.dp)
+                .background(Color(0x33FFFFFF), RoundedCornerShape(5.dp))
+        ) {
+            val bufProgress = if (durationMs > 0L) {
+                (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            } else 0f
+
+            if (bufProgress > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(bufProgress)
+                        .background(Color(0x44FFFFFF), RoundedCornerShape(5.dp))
+                )
+            }
+
+            val progress = if (durationMs > 0L) {
+                (currentPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            } else 0f
+
+            if (progress > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(progress)
+                        .background(GlassColors.AccentAmber, RoundedCornerShape(5.dp))
+                )
+            }
+
+            if (sponsorBlockEnabled && durationMs > 0L && sponsorSegments.isNotEmpty()) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val durSec = durationMs / 1000f
+                    for (seg in sponsorSegments) {
+                        if (seg.segment.size == 2) {
+                            val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
+                            val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
+                            drawRect(
+                                color = GlassColors.AccentEmerald,
+                                topLeft = Offset(size.width * startFrac, 0f),
+                                size = Size(
+                                    (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
+                                    size.height
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Text(
+            text = formatMillis(durationMs),
+            color = GlassColors.TextSecondary,
+            fontSize = 14.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .width(64.dp)
+                .padding(start = 10.dp)
+        )
+    }
+}
+
+private val TvButtonShape = RoundedCornerShape(12.dp)
+
+@Composable
 fun TvActionButton(
     label: String,
     icon: ImageVector? = null,
@@ -834,36 +864,29 @@ fun TvActionButton(
 ) {
     var focused by remember { mutableStateOf(false) }
 
-    val scale by animateFloatAsState(if (focused) 1.07f else 1f)
-    val bg by animateColorAsState(
-        when {
-            focused -> GlassColors.AccentAmber
-            highlighted -> Color(0x44F59E0B)
-            else -> Color(0x77161B29)
-        }
-    )
+    val bg = when {
+        focused -> GlassColors.AccentAmber
+        highlighted -> Color(0x44F59E0B)
+        else -> Color(0x88161B29)
+    }
     val fg = when {
         focused -> Color(0xFF09090B)
         activeTint != null -> activeTint
         highlighted -> GlassColors.AccentAmberSoft
         else -> GlassColors.TextPrimary
     }
-    val borderColor by animateColorAsState(
-        when {
-            focused -> GlassColors.AccentAmberSoft
-            highlighted -> Color(0x88F59E0B)
-            else -> Color(0x33FFFFFF)
-        }
-    )
+    val borderColor = when {
+        focused -> GlassColors.AccentAmberSoft
+        highlighted -> Color(0x88F59E0B)
+        else -> Color(0x33FFFFFF)
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg)
-            .border(if (focused) 2.dp else 1.dp, borderColor, RoundedCornerShape(12.dp))
+            .background(bg, TvButtonShape)
+            .border(if (focused) 2.dp else 1.dp, borderColor, TvButtonShape)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp)

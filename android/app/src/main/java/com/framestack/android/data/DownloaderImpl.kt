@@ -15,13 +15,13 @@ import java.util.concurrent.TimeUnit
 class DownloaderImpl private constructor() : Downloader() {
 
     private val dispatcher = Dispatcher().apply {
-        maxRequests = 32
-        maxRequestsPerHost = 12
+        maxRequests = 64
+        maxRequestsPerHost = 24
     }
 
     val rawClient: OkHttpClient = OkHttpClient.Builder()
         .dispatcher(dispatcher)
-        .connectionPool(ConnectionPool(12, 5, TimeUnit.MINUTES))
+        .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
         .retryOnConnectionFailure(true)
         .readTimeout(20, TimeUnit.SECONDS)
         .connectTimeout(12, TimeUnit.SECONDS)
@@ -53,7 +53,7 @@ class DownloaderImpl private constructor() : Downloader() {
         if (isYouTubeHost) {
             val auth = authManager
             if (auth != null && auth.isSignedIn()) {
-                val authHeaders = auth.buildAuthHeaders()
+                val authHeaders = auth.buildAuthHeaders(httpClient = rawClient)
                 authHeaders["Cookie"]?.let { cookie ->
                     if (!headers.keys.any { it.equals("Cookie", ignoreCase = true) }) {
                         builder.addHeader("Cookie", cookie)
@@ -62,8 +62,10 @@ class DownloaderImpl private constructor() : Downloader() {
                 authHeaders["Authorization"]?.let { authHeader ->
                     if (!headers.keys.any { it.equals("Authorization", ignoreCase = true) }) {
                         builder.addHeader("Authorization", authHeader)
-                        builder.addHeader("X-Origin", "https://www.youtube.com")
-                        builder.addHeader("Origin", "https://www.youtube.com")
+                        if (authHeader.startsWith("SAPISIDHASH")) {
+                            builder.addHeader("X-Origin", "https://www.youtube.com")
+                            builder.addHeader("Origin", "https://www.youtube.com")
+                        }
                         builder.addHeader("X-Goog-AuthUser", "0")
                     }
                 }

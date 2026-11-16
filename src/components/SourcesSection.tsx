@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Download, Play, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
+import { Download, Play, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { SourceType, VideoSource } from '../types/youtube';
 import { ThumbnailImage } from './ThumbnailImage';
 
@@ -29,20 +29,11 @@ export function SourcesSection({
   onImportJson,
 }: SourcesSectionProps) {
   const [filter, setFilter] = useState<FilterTab>('all');
-  const [search, setSearch] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const filteredSources = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return sources.filter((source) => {
-      if (filter !== 'all' && source.type !== filter) return false;
-      if (!q) return true;
-      return (
-        source.title.toLowerCase().includes(q) ||
-        source.category.toLowerCase().includes(q)
-      );
-    });
-  }, [sources, filter, search]);
+    return sources.filter((source) => filter === 'all' || source.type === filter);
+  }, [sources, filter]);
 
   const channelCount = sources.filter((s) => s.type === 'channel').length;
   const playlistCount = sources.filter((s) => s.type === 'playlist').length;
@@ -103,7 +94,7 @@ export function SourcesSection({
         </div>
       </div>
 
-      {/* Filter Tabs + Search */}
+      {/* Filter Tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div
           role="tablist"
@@ -133,18 +124,6 @@ export function SourcesSection({
             </button>
           ))}
         </div>
-
-        <div className="relative w-full sm:w-64">
-          <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search sources..."
-            aria-label="Search sources"
-            className="w-full glass-input focus:border-amber-400/70 focus:outline-none rounded-xl pl-8 pr-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 transition-colors"
-          />
-        </div>
       </div>
 
       {/* Sources Grid */}
@@ -156,7 +135,7 @@ export function SourcesSection({
           <p className="text-sm text-zinc-400 mb-5">
             {sources.length === 0
               ? 'Add your first YouTube channel or playlist to start building your library.'
-              : 'Try adjusting your filter or search query.'}
+              : 'Try switching the source filter tab.'}
           </p>
           <button
             type="button"

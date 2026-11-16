@@ -82,7 +82,36 @@ class YouTubeRepository(private val context: Context) {
         prettyPrint = true
     }
 
+    private val compactJson = Json {
+        ignoreUnknownKeys = true
+    }
+
     private val prefs = context.getSharedPreferences("framestack_prefs", Context.MODE_PRIVATE)
+    private val feedCachePrefs = context.getSharedPreferences("framestack_feed_cache", Context.MODE_PRIVATE)
+
+    suspend fun warmUp() = withContext(Dispatchers.IO) {
+        runCatching { hasHardwareAv1 }
+        runCatching { hasHardwareVp9 }
+        runCatching { getVisitorData() }
+    }
+
+    fun getCachedFeed(sourceId: String): List<VideoItem>? {
+        feedCache[sourceId]?.items?.takeIf { it.isNotEmpty() }?.let { return it }
+        val saved = feedCachePrefs.getString("feed_$sourceId", null) ?: return null
+        val decoded = runCatching {
+            compactJson.decodeFromString<List<VideoItem>>(saved)
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+        feedCache[sourceId] = CachedFeed(decoded, 0L)
+        return decoded
+    }
+
+    private fun saveFeedToDisk(sourceId: String, items: List<VideoItem>) {
+        if (items.isEmpty()) return
+        runCatching {
+            val encoded = compactJson.encodeToString(items.take(40))
+            feedCachePrefs.edit().putString("feed_$sourceId", encoded).apply()
+        }
+    }
 
     fun clearStreamCache() {
         streamCache.clear()
@@ -284,6 +313,7 @@ class YouTubeRepository(private val context: Context) {
 
                 if (items.isNotEmpty()) {
                     feedCache[source.id] = CachedFeed(items, System.currentTimeMillis())
+                    saveFeedToDisk(source.id, items)
                 }
                 items
             }
@@ -306,7 +336,7 @@ class YouTubeRepository(private val context: Context) {
                 val resolved = coroutineScope {
                     val sponsorDeferred = async { fetchSponsorSegments(video.videoId) }
                     val signedIn = authManager.isSignedIn()
-                    val visitorData = getVisitorData()
+                    val visitorData = cachedVisitorData
 
                     var lastError: Throwable? = null
                     var sawLoginRequired = false
@@ -323,16 +353,16 @@ class YouTubeRepository(private val context: Context) {
                             { resolveViaInnertube(video, CLIENT_TVHTML5_AUTH, visitorData, emptyList()) },
                             { resolveViaInnertube(video, CLIENT_WEB_AUTH, visitorData, emptyList()) },
                             { resolveViaNewPipe(video) },
-                            { resolveViaInnertube(video, CLIENT_ANDROID_VR, visitorData, emptyList()) },
-                            { resolveViaInnertube(video, CLIENT_IOS, visitorData, emptyList()) },
-                            { resolveViaInnertube(video, CLIENT_ANDROID, visitorData, emptyList()) }
+                            { resolveViaInnertube(video, CLIENT_ANDROID_VR, visitorData ?: getVisitorData(), emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_IOS, visitorData ?: getVisitorData(), emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_ANDROID, visitorData ?: getVisitorData(), emptyList()) }
                         )
                     } else {
                         listOf(
                             { resolveViaInnertube(video, CLIENT_ANDROID_VR, visitorData, emptyList()) },
                             { resolveViaNewPipe(video) },
-                            { resolveViaInnertube(video, CLIENT_IOS, visitorData, emptyList()) },
-                            { resolveViaInnertube(video, CLIENT_ANDROID, visitorData, emptyList()) }
+                            { resolveViaInnertube(video, CLIENT_IOS, visitorData ?: getVisitorData(), emptyList()) },
+                            { resolveViaInnertube(video, CLIENT_ANDROID, visitorData ?: getVisitorData(), emptyList()) }
                         )
                     }
 
@@ -489,18 +519,24 @@ class YouTubeRepository(private val context: Context) {
             }
         }
 
+        val authHeaders = if (client.sendCookies && authManager.isSignedIn()) {
+            authManager.buildAuthHeaders(httpClient = DownloaderImpl.getInstance().rawClient)
+        } else {
+            emptyMap()
+        }
+        val isBearerAuth = authHeaders["Authorization"]?.startsWith("Bearer ") == true
+        val targetUrl = if (isBearerAuth) YOUTUBEI_GAPIS_PLAYER else client.endpointUrl
+
         val reqBuilder = Request.Builder()
-            .url(client.endpointUrl)
+            .url(targetUrl)
             .header("Content-Type", "application/json")
             .header("User-Agent", client.userAgent)
             .header("X-YouTube-Client-Name", client.clientIdHeader)
             .header("X-YouTube-Client-Version", client.clientVersion)
             .header("X-Goog-Api-Format-Version", "2")
 
-        if (client.sendCookies && authManager.isSignedIn()) {
-            authManager.buildAuthHeaders().forEach { (k, v) ->
-                reqBuilder.header(k, v)
-            }
+        authHeaders.forEach { (k, v) ->
+            reqBuilder.header(k, v)
         }
 
         val body = payloadJson.toString().toRequestBody("application/json; charset=utf-8".toMediaType())

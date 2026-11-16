@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -19,10 +19,10 @@ import androidx.compose.ui.unit.dp
 object GlassColors {
     val DeepBgTop = Color(0xFF06070B)
     val DeepBgBottom = Color(0xFF0A0D16)
-    val GlassSurface = Color(0x9E131722)
-    val GlassSurfaceElevated = Color(0xBD1A2030)
-    val GlassSurfaceActive = Color(0x36F59E0B)
-    val GlassHud = Color(0xB80B0E17)
+    val GlassSurface = Color(0xB3131722)
+    val GlassSurfaceElevated = Color(0xCC1A2030)
+    val GlassSurfaceActive = Color(0x3DF59E0B)
+    val GlassHud = Color(0xC40B0E17)
     val BorderTopLight = Color(0x47FFFFFF)
     val BorderMid = Color(0x1AFFFFFF)
     val BorderAmber = Color(0x99F59E0B)
@@ -34,6 +34,38 @@ object GlassColors {
     val TextMuted = Color(0xFF71717A)
 }
 
+object GlassBrushes {
+    val BorderHighlighted = Brush.linearGradient(
+        listOf(
+            GlassColors.AccentAmber,
+            Color(0x55FDE68A),
+            Color(0x88F59E0B)
+        )
+    )
+
+    val BorderDefault = Brush.linearGradient(
+        listOf(
+            GlassColors.BorderTopLight,
+            GlassColors.BorderMid,
+            Color(0x24FFFFFF)
+        )
+    )
+
+    val AmberButton = Brush.linearGradient(
+        listOf(
+            GlassColors.AccentAmberSoft,
+            GlassColors.AccentAmber
+        )
+    )
+
+    val HudScrim = Brush.verticalGradient(
+        0.0f to Color(0x8806070B),
+        0.35f to Color.Transparent,
+        0.65f to Color.Transparent,
+        1.0f to Color(0xAA06070B)
+    )
+}
+
 @Composable
 fun GlassBackdrop(
     modifier: Modifier = Modifier,
@@ -42,37 +74,30 @@ fun GlassBackdrop(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(GlassColors.DeepBgTop, GlassColors.DeepBgBottom)
+            .drawWithCache {
+                val baseBrush = Brush.verticalGradient(
+                    colors = listOf(GlassColors.DeepBgTop, GlassColors.DeepBgBottom),
+                    startY = 0f,
+                    endY = size.height
                 )
-            )
-    ) {
-        // Soft ambient top-left amber glow & bottom-right sapphire glow for glass refraction depth
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color(0x22F59E0B), Color.Transparent),
-                        center = Offset(180f, 140f),
-                        radius = 900f
-                    )
+                val amberGlow = Brush.radialGradient(
+                    colors = listOf(Color(0x20F59E0B), Color.Transparent),
+                    center = Offset(size.width * 0.14f, size.height * 0.10f),
+                    radius = (size.maxDimension * 0.55f).coerceAtLeast(300f)
                 )
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color(0x1E38BDF8), Color.Transparent),
-                        center = Offset(1200f, 1600f),
-                        radius = 1100f
-                    )
+                val sapphireGlow = Brush.radialGradient(
+                    colors = listOf(Color(0x1A38BDF8), Color.Transparent),
+                    center = Offset(size.width * 0.88f, size.height * 0.85f),
+                    radius = (size.maxDimension * 0.65f).coerceAtLeast(360f)
                 )
-        )
-        content()
-    }
+                onDrawBehind {
+                    drawRect(brush = baseBrush)
+                    drawRect(brush = amberGlow)
+                    drawRect(brush = sapphireGlow)
+                }
+            },
+        content = content
+    )
 }
 
 fun Modifier.glassPanel(
@@ -87,26 +112,9 @@ fun Modifier.glassPanel(
         elevated -> GlassColors.GlassSurfaceElevated
         else -> GlassColors.GlassSurface
     }
-    val borderBrush = if (highlighted) {
-        Brush.linearGradient(
-            listOf(
-                GlassColors.AccentAmber,
-                Color(0x55FDE68A),
-                Color(0x88F59E0B)
-            )
-        )
-    } else {
-        Brush.linearGradient(
-            listOf(
-                GlassColors.BorderTopLight,
-                GlassColors.BorderMid,
-                Color(0x24FFFFFF)
-            )
-        )
-    }
+    val borderBrush = if (highlighted) GlassBrushes.BorderHighlighted else GlassBrushes.BorderDefault
     return this
-        .clip(shape)
-        .background(bg)
+        .background(bg, shape)
         .border(borderWidth, borderBrush, shape)
 }
 

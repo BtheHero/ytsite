@@ -109,16 +109,12 @@ fun NativeVideoPlayer(
 
     var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(false) }
-    var currentPosMs by remember { mutableLongStateOf(0L) }
-    var bufferedPosMs by remember { mutableLongStateOf(0L) }
-    var durationMs by remember { mutableLongStateOf(0L) }
-    var isScrubbing by remember { mutableStateOf(false) }
-    var scrubPosMs by remember { mutableLongStateOf(0L) }
 
     var controlsVisible by remember { mutableStateOf(true) }
     var interactionTick by remember { mutableLongStateOf(0L) }
     var seekFeedbackText by remember { mutableStateOf<String?>(null) }
     var viewportWidthPx by remember { mutableIntStateOf(0) }
+    var isScrubbing by remember { mutableStateOf(false) }
 
     var showQualitySheet by remember { mutableStateOf(false) }
     var showSpeedSheet by remember { mutableStateOf(false) }
@@ -183,9 +179,6 @@ fun NativeVideoPlayer(
         if (videoId != lastPreparedVideoId) {
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
-            currentPosMs = 0L
-            bufferedPosMs = 0L
-            durationMs = 0L
             lastSkippedUuid = null
         }
     }
@@ -243,35 +236,18 @@ fun NativeVideoPlayer(
         exoPlayer.playbackParameters = PlaybackParameters(playbackSpeed)
     }
 
-    // Poll position smoothly & enforce SponsorBlock auto-skip
-    LaunchedEffect(exoPlayer, sponsorSegments, sponsorBlockEnabled) {
-        while (true) {
-            if (!isScrubbing) {
-                currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            }
-            bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
-            durationMs = exoPlayer.duration.coerceAtLeast(0L)
-
-            if (sponsorBlockEnabled && isPlaying && sponsorSegments.isNotEmpty()) {
-                val sec = currentPosMs / 1000.0
-                val hit = sponsorSegments.firstOrNull { seg ->
-                    seg.segment.size == 2 && sec >= seg.segment[0] && sec < seg.segment[1] - 0.6
-                }
-                if (hit != null && hit.UUID != lastSkippedUuid) {
-                    lastSkippedUuid = hit.UUID
-                    val targetMs = (hit.segment[1] * 1000.0).toLong()
-                    exoPlayer.seekTo(targetMs)
-                    val label = when (hit.category) {
-                        "selfpromo" -> "Skipped self-promotion"
-                        "interaction" -> "Skipped interaction reminder"
-                        else -> "Skipped sponsor segment"
-                    }
-                    onSkipBanner(label)
-                }
-            }
-            delay(200L)
+    // Isolated SponsorBlock monitor (zero root recompositions)
+    SponsorBlockMonitor(
+        exoPlayer = exoPlayer,
+        isPlaying = isPlaying,
+        sponsorSegments = sponsorSegments,
+        sponsorBlockEnabled = sponsorBlockEnabled,
+        lastSkippedUuid = lastSkippedUuid,
+        onSkipped = { uuid, label ->
+            lastSkippedUuid = uuid
+            onSkipBanner(label)
         }
-    }
+    )
 
     val activeErrorText = streamError ?: playbackErrorText
 
@@ -297,7 +273,6 @@ fun NativeVideoPlayer(
         }
     }
 
-    val displayedPosMs = if (isScrubbing) scrubPosMs else currentPosMs
     val shape = if (isFullscreen) RoundedCornerShape(0.dp) else RoundedCornerShape(20.dp)
 
     Box(
@@ -309,7 +284,7 @@ fun NativeVideoPlayer(
             .then(
                 if (isFullscreen) Modifier else Modifier.border(
                     1.dp,
-                    Brush.linearGradient(listOf(GlassColors.BorderTopLight, GlassColors.BorderMid)),
+                    GlassBrushes.BorderDefault,
                     shape
                 )
             )
@@ -328,13 +303,11 @@ fun NativeVideoPlayer(
                         if (isLeft) {
                             val target = (exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L)
                             exoPlayer.seekTo(target)
-                            currentPosMs = target
                             seekFeedbackText = "-10s"
                         } else {
                             val maxDur = exoPlayer.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
                             val target = (exoPlayer.currentPosition + 10_000L).coerceAtMost(maxDur)
                             exoPlayer.seekTo(target)
-                            currentPosMs = target
                             seekFeedbackText = "+10s"
                         }
                         interactionTick++
@@ -347,6 +320,7 @@ fun NativeVideoPlayer(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     useController = false
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                     player = exoPlayer
                 }
             },
@@ -486,14 +460,7 @@ fun NativeVideoPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.0f to Color(0x8806070B),
-                            0.35f to Color.Transparent,
-                            0.65f to Color.Transparent,
-                            1.0f to Color(0xAA06070B)
-                        )
-                    )
+                    .background(GlassBrushes.HudScrim)
                     .padding(horizontal = 10.dp, vertical = 10.dp)
             ) {
                 // Top Floating Glass Pill Bar
@@ -623,12 +590,7 @@ fun NativeVideoPlayer(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .size(56.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(GlassColors.AccentAmberSoft, GlassColors.AccentAmber)
-                                )
-                            )
+                            .background(GlassBrushes.AmberButton, CircleShape)
                             .border(1.5.dp, Color(0x99FFFFFF), CircleShape)
                             .clickable {
                                 if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -662,101 +624,19 @@ fun NativeVideoPlayer(
                     }
                 }
 
-                // Bottom Detached Floating Glass Control Dock
-                AnimatedVisibility(
-                    visible = true,
-                    enter = slideInVertically { it / 2 } + fadeIn(),
-                    exit = slideOutVertically { it / 2 } + fadeOut(),
+                // Bottom Detached Floating Glass Control Dock (isolated timeline polling)
+                PlayerSeekBarDock(
+                    exoPlayer = exoPlayer,
+                    videoId = videoId,
+                    sponsorSegments = sponsorSegments,
+                    sponsorBlockEnabled = sponsorBlockEnabled,
+                    onScrubStateChanged = { scrubbing ->
+                        isScrubbing = scrubbing
+                        interactionTick++
+                    },
+                    onSeekCompleted = { bumpControls() },
                     modifier = Modifier.align(Alignment.BottomCenter)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .glassPanel(shape = RoundedCornerShape(16.dp), fillColor = GlassColors.GlassHud)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = formatMillis(displayedPosMs),
-                            color = GlassColors.TextPrimary,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.width(44.dp)
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(28.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // Buffered track + SponsorBlock markers behind Slider thumb
-                            Canvas(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(4.dp)
-                            ) {
-                                if (durationMs > 0L) {
-                                    val bufFrac = (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                                    drawRect(
-                                        color = Color(0x44FFFFFF),
-                                        topLeft = Offset.Zero,
-                                        size = Size(size.width * bufFrac, size.height)
-                                    )
-                                    if (sponsorBlockEnabled && sponsorSegments.isNotEmpty()) {
-                                        val durSec = durationMs / 1000f
-                                        for (seg in sponsorSegments) {
-                                            if (seg.segment.size == 2) {
-                                                val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
-                                                val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
-                                                drawRect(
-                                                    color = GlassColors.AccentEmerald,
-                                                    topLeft = Offset(size.width * startFrac, 0f),
-                                                    size = Size(
-                                                        (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
-                                                        size.height
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Slider(
-                                value = if (durationMs > 0L) displayedPosMs.toFloat() else 0f,
-                                onValueChange = {
-                                    isScrubbing = true
-                                    scrubPosMs = it.toLong()
-                                    interactionTick++
-                                },
-                                onValueChangeFinished = {
-                                    exoPlayer.seekTo(scrubPosMs)
-                                    currentPosMs = scrubPosMs
-                                    isScrubbing = false
-                                    bumpControls()
-                                },
-                                valueRange = 0f..(if (durationMs > 0L) durationMs.toFloat() else 1f),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = GlassColors.AccentAmberSoft,
-                                    activeTrackColor = GlassColors.AccentAmber,
-                                    inactiveTrackColor = Color(0x33FFFFFF)
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        Text(
-                            text = formatMillis(durationMs),
-                            color = GlassColors.TextSecondary,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .width(44.dp)
-                                .padding(start = 6.dp)
-                        )
-                    }
-                }
+                )
             }
         }
     }
@@ -841,6 +721,156 @@ fun NativeVideoPlayer(
                 Spacer(modifier = Modifier.height(20.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun SponsorBlockMonitor(
+    exoPlayer: ExoPlayer,
+    isPlaying: Boolean,
+    sponsorSegments: List<SponsorSegment>,
+    sponsorBlockEnabled: Boolean,
+    lastSkippedUuid: String?,
+    onSkipped: (uuid: String, label: String) -> Unit
+) {
+    LaunchedEffect(exoPlayer, isPlaying, sponsorSegments, sponsorBlockEnabled, lastSkippedUuid) {
+        if (!sponsorBlockEnabled || !isPlaying || sponsorSegments.isEmpty()) return@LaunchedEffect
+        while (true) {
+            val sec = exoPlayer.currentPosition / 1000.0
+            val hit = sponsorSegments.firstOrNull { seg ->
+                seg.segment.size == 2 && sec >= seg.segment[0] && sec < seg.segment[1] - 0.6
+            }
+            if (hit != null && hit.UUID != lastSkippedUuid) {
+                val targetMs = (hit.segment[1] * 1000.0).toLong()
+                exoPlayer.seekTo(targetMs)
+                val label = when (hit.category) {
+                    "selfpromo" -> "Skipped self-promotion"
+                    "interaction" -> "Skipped interaction reminder"
+                    else -> "Skipped sponsor segment"
+                }
+                onSkipped(hit.UUID, label)
+                break
+            }
+            delay(350L)
+        }
+    }
+}
+
+@Composable
+private fun PlayerSeekBarDock(
+    exoPlayer: ExoPlayer,
+    videoId: String?,
+    sponsorSegments: List<SponsorSegment>,
+    sponsorBlockEnabled: Boolean,
+    onScrubStateChanged: (Boolean) -> Unit,
+    onSeekCompleted: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var currentPosMs by remember(videoId) { mutableLongStateOf(exoPlayer.currentPosition.coerceAtLeast(0L)) }
+    var bufferedPosMs by remember(videoId) { mutableLongStateOf(exoPlayer.bufferedPosition.coerceAtLeast(0L)) }
+    var durationMs by remember(videoId) { mutableLongStateOf(exoPlayer.duration.coerceAtLeast(0L)) }
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubPosMs by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(exoPlayer, videoId) {
+        while (true) {
+            if (!isScrubbing) {
+                currentPosMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            }
+            bufferedPosMs = exoPlayer.bufferedPosition.coerceAtLeast(0L)
+            durationMs = exoPlayer.duration.coerceAtLeast(0L)
+            delay(250L)
+        }
+    }
+
+    val displayedPosMs = if (isScrubbing) scrubPosMs else currentPosMs
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .glassPanel(shape = RoundedCornerShape(16.dp), fillColor = GlassColors.GlassHud)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = formatMillis(displayedPosMs),
+            color = GlassColors.TextPrimary,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.width(44.dp)
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(28.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+            ) {
+                if (durationMs > 0L) {
+                    val bufFrac = (bufferedPosMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                    drawRect(
+                        color = Color(0x44FFFFFF),
+                        topLeft = Offset.Zero,
+                        size = Size(size.width * bufFrac, size.height)
+                    )
+                    if (sponsorBlockEnabled && sponsorSegments.isNotEmpty()) {
+                        val durSec = durationMs / 1000f
+                        for (seg in sponsorSegments) {
+                            if (seg.segment.size == 2) {
+                                val startFrac = (seg.segment[0].toFloat() / durSec).coerceIn(0f, 1f)
+                                val endFrac = (seg.segment[1].toFloat() / durSec).coerceIn(0f, 1f)
+                                drawRect(
+                                    color = GlassColors.AccentEmerald,
+                                    topLeft = Offset(size.width * startFrac, 0f),
+                                    size = Size(
+                                        (size.width * (endFrac - startFrac)).coerceAtLeast(4f),
+                                        size.height
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Slider(
+                value = if (durationMs > 0L) displayedPosMs.toFloat() else 0f,
+                onValueChange = {
+                    isScrubbing = true
+                    scrubPosMs = it.toLong()
+                    onScrubStateChanged(true)
+                },
+                onValueChangeFinished = {
+                    exoPlayer.seekTo(scrubPosMs)
+                    currentPosMs = scrubPosMs
+                    isScrubbing = false
+                    onScrubStateChanged(false)
+                    onSeekCompleted()
+                },
+                valueRange = 0f..(if (durationMs > 0L) durationMs.toFloat() else 1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = GlassColors.AccentAmberSoft,
+                    activeTrackColor = GlassColors.AccentAmber,
+                    inactiveTrackColor = Color(0x33FFFFFF)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Text(
+            text = formatMillis(durationMs),
+            color = GlassColors.TextSecondary,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .width(44.dp)
+                .padding(start = 6.dp)
+        )
     }
 }
 

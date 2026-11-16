@@ -1,12 +1,5 @@
 package com.framestack.android.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,13 +21,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.framestack.android.R
 import com.framestack.android.data.VideoItem
 import com.framestack.android.data.VideoSource
@@ -56,18 +49,9 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
     var showSideMenu by rememberSaveable { mutableStateOf(true) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showSignInDialog by remember { mutableStateOf(false) }
-    var queueQuery by remember { mutableStateOf("") }
 
     val activeSource = remember(state.sources, state.activeSourceId) {
         state.sources.firstOrNull { it.id == state.activeSourceId } ?: state.sources.firstOrNull()
-    }
-
-    val filteredQueue = remember(state.queue, queueQuery) {
-        val q = queueQuery.trim().lowercase()
-        if (q.isEmpty()) state.queue
-        else state.queue.filter {
-            it.title.lowercase().contains(q) || it.author.lowercase().contains(q)
-        }
     }
 
     if (isWatchingPlayer) {
@@ -105,9 +89,15 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
         if (showSignInDialog) {
             YouTubeSignInDialog(
                 isSignedIn = state.isSignedIn,
+                authManager = viewModel.authManager,
+                defaultToPairCode = true,
                 onSignedIn = { cookies ->
                     showSignInDialog = false
                     viewModel.onYouTubeCookiesSaved(cookies)
+                },
+                onOAuthSignedIn = {
+                    showSignInDialog = false
+                    viewModel.onOAuthSignedIn()
                 },
                 onSignOut = {
                     viewModel.signOutYouTube()
@@ -136,12 +126,8 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                 .fillMaxSize()
                 .padding(24.dp)
         ) {
-            // Hideable 10-foot Frosted Glass Navigation Rail
-            AnimatedVisibility(
-                visible = showSideMenu,
-                enter = expandHorizontally() + fadeIn(),
-                exit = shrinkHorizontally() + fadeOut()
-            ) {
+            // Hideable 10-foot Frosted Glass Navigation Rail (instant toggle for zero grid remeasure lag)
+            if (showSideMenu) {
                 Column(
                     modifier = Modifier
                         .width(276.dp)
@@ -220,7 +206,11 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        items(state.sources, key = { it.id }) { source ->
+                        items(
+                            items = state.sources,
+                            key = { it.id },
+                            contentType = { "tv_source_nav" }
+                        ) { source ->
                             TvSourceNavItem(
                                 source = source,
                                 isActive = source.id == activeSource?.id,
@@ -289,7 +279,7 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                                         append(it.category)
                                         append(" • ")
                                     }
-                                    append("${filteredQueue.size} videos")
+                                    append("${state.queue.size} videos")
                                 },
                                 color = GlassColors.TextSecondary,
                                 fontSize = 13.sp
@@ -308,13 +298,13 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                                 highlighted = true,
                                 onClick = { isWatchingPlayer = true }
                             )
-                        } else if (filteredQueue.isNotEmpty()) {
+                        } else if (state.queue.isNotEmpty()) {
                             TvActionButton(
                                 label = "Play All",
                                 icon = Icons.Rounded.PlayArrow,
                                 highlighted = true,
                                 onClick = {
-                                    filteredQueue.firstOrNull()?.let { first ->
+                                    state.queue.firstOrNull()?.let { first ->
                                         viewModel.playVideo(first)
                                         isWatchingPlayer = true
                                     }
@@ -339,27 +329,6 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                OutlinedTextField(
-                    value = queueQuery,
-                    onValueChange = { queueQuery = it },
-                    placeholder = { Text("Filter videos in queue...", color = GlassColors.TextMuted) },
-                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = GlassColors.TextMuted) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GlassColors.AccentAmber,
-                        unfocusedBorderColor = Color(0x28FFFFFF),
-                        focusedTextColor = GlassColors.TextPrimary,
-                        unfocusedTextColor = GlassColors.TextPrimary,
-                        focusedContainerColor = GlassColors.GlassSurface,
-                        unfocusedContainerColor = GlassColors.GlassSurface
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
 
                 Spacer(modifier = Modifier.height(18.dp))
 
@@ -412,23 +381,13 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                         }
                     }
 
-                    filteredQueue.isEmpty() -> {
+                    state.queue.isEmpty() -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "No videos match your filter.",
-                                    color = GlassColors.TextSecondary,
-                                    fontSize = 16.sp
-                                )
-                                if (queueQuery.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    TvActionButton(
-                                        label = "Clear Filter",
-                                        icon = Icons.Rounded.Clear,
-                                        onClick = { queueQuery = "" }
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "No videos found for this source.",
+                                color = GlassColors.TextSecondary,
+                                fontSize = 16.sp
+                            )
                         }
                     }
 
@@ -440,7 +399,11 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
                             contentPadding = PaddingValues(6.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            items(filteredQueue, key = { it.videoId }) { video ->
+                            items(
+                                items = state.queue,
+                                key = { it.videoId },
+                                contentType = { "tv_video_card" }
+                            ) { video ->
                                 TvVideoCard(
                                     video = video,
                                     isPlayingVideo = video.videoId == state.activeVideo?.videoId,
@@ -476,9 +439,15 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
     if (showSignInDialog) {
         YouTubeSignInDialog(
             isSignedIn = state.isSignedIn,
+            authManager = viewModel.authManager,
+            defaultToPairCode = true,
             onSignedIn = { cookies ->
                 showSignInDialog = false
                 viewModel.onYouTubeCookiesSaved(cookies)
+            },
+            onOAuthSignedIn = {
+                showSignInDialog = false
+                viewModel.onOAuthSignedIn()
             },
             onSignOut = {
                 viewModel.signOutYouTube()
@@ -488,6 +457,10 @@ fun TvMainScreen(viewModel: PlayerViewModel) {
         )
     }
 }
+
+private val TvSidebarShape = RoundedCornerShape(12.dp)
+private val TvCardShape = RoundedCornerShape(16.dp)
+private val TvThumbClipShape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
 
 @Composable
 private fun TvSidebarButton(
@@ -499,36 +472,29 @@ private fun TvSidebarButton(
 ) {
     var focused by remember { mutableStateOf(false) }
 
-    val scale by animateFloatAsState(if (focused) 1.04f else 1f)
-    val bg by animateColorAsState(
-        when {
-            focused -> GlassColors.AccentAmber
-            isPrimary -> Color(0x36F59E0B)
-            else -> Color(0x66171C2B)
-        }
-    )
+    val bg = when {
+        focused -> GlassColors.AccentAmber
+        isPrimary -> Color(0x36F59E0B)
+        else -> Color(0x66171C2B)
+    }
     val fg = when {
         focused -> Color(0xFF09090B)
         isPrimary -> GlassColors.AccentAmberSoft
         else -> GlassColors.TextPrimary
     }
-    val border by animateColorAsState(
-        when {
-            focused -> GlassColors.AccentAmberSoft
-            isPrimary -> GlassColors.AccentAmber
-            else -> Color(0x2EFFFFFF)
-        }
-    )
+    val border = when {
+        focused -> GlassColors.AccentAmberSoft
+        isPrimary -> GlassColors.AccentAmber
+        else -> Color(0x2EFFFFFF)
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg)
-            .border(if (focused) 2.dp else 1.dp, border, RoundedCornerShape(12.dp))
+            .background(bg, TvSidebarShape)
+            .border(if (focused) 2.dp else 1.dp, border, TvSidebarShape)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp)
@@ -553,33 +519,26 @@ private fun TvSourceNavItem(
 ) {
     var focused by remember { mutableStateOf(false) }
 
-    val scale by animateFloatAsState(if (focused) 1.03f else 1f)
-    val bg by animateColorAsState(
-        when {
-            focused -> Color(0xAA242B3E)
-            isActive -> Color(0x33F59E0B)
-            else -> Color(0x66131722)
-        }
-    )
-    val border by animateColorAsState(
-        when {
-            focused -> GlassColors.AccentAmber
-            isActive -> Color(0x99F59E0B)
-            else -> Color(0x24FFFFFF)
-        }
-    )
+    val bg = when {
+        focused -> Color(0xAA242B3E)
+        isActive -> Color(0x33F59E0B)
+        else -> Color(0x66131722)
+    }
+    val border = when {
+        focused -> GlassColors.AccentAmber
+        isActive -> Color(0x99F59E0B)
+        else -> Color(0x24FFFFFF)
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .scale(scale)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg)
+            .background(bg, TvSidebarShape)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = border,
-                shape = RoundedCornerShape(12.dp)
+                shape = TvSidebarShape
             )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
@@ -589,8 +548,10 @@ private fun TvSourceNavItem(
             modifier = Modifier
                 .width(4.dp)
                 .height(26.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(if (isActive || focused) GlassColors.AccentAmber else Color(0x44FFFFFF))
+                .background(
+                    color = if (isActive || focused) GlassColors.AccentAmber else Color(0x44FFFFFF),
+                    shape = RoundedCornerShape(2.dp)
+                )
         )
         Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -620,27 +581,30 @@ private fun TvVideoCard(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val thumbRequest = remember(video.thumbnailUrl) {
+        ImageRequest.Builder(context)
+            .data(video.thumbnailUrl)
+            .size(480, 270)
+            .crossfade(false)
+            .build()
+    }
 
-    val scale by animateFloatAsState(if (focused) 1.05f else 1f)
-    val cardBg by animateColorAsState(if (focused) Color(0xCC1E2538) else GlassColors.GlassSurface)
-    val border by animateColorAsState(
-        when {
-            focused -> GlassColors.AccentAmber
-            isPlayingVideo -> Color(0x99F59E0B)
-            else -> Color(0x2EFFFFFF)
-        }
-    )
+    val cardBg = if (focused) Color(0xCC1E2538) else GlassColors.GlassSurface
+    val border = when {
+        focused -> GlassColors.AccentAmber
+        isPlayingVideo -> Color(0x99F59E0B)
+        else -> Color(0x2EFFFFFF)
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .scale(scale)
-            .clip(RoundedCornerShape(16.dp))
-            .background(cardBg)
+            .background(cardBg, TvCardShape)
             .border(
                 width = if (focused) 3.dp else 1.dp,
                 color = border,
-                shape = RoundedCornerShape(16.dp)
+                shape = TvCardShape
             )
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
@@ -649,10 +613,11 @@ private fun TvVideoCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
+                .clip(TvThumbClipShape)
                 .background(Color(0xFF141822))
         ) {
             AsyncImage(
-                model = video.thumbnailUrl,
+                model = thumbRequest,
                 contentDescription = video.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

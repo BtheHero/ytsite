@@ -29,7 +29,7 @@ class FrameStackApp : Application(), ImageLoaderFactory {
                     .maxSizeBytes(50L * 1024L * 1024L)
                     .build()
             }
-            .crossfade(true)
+            .crossfade(false)
             .build()
     }
 }

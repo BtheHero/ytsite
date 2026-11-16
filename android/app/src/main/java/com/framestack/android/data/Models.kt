@@ -18,6 +18,7 @@ data class VideoSource(
     val url: String
 )
 
+@Serializable
 data class VideoItem(
     val videoId: String,
     val title: String,

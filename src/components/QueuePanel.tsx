@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react';
-import { PanelRightClose, RefreshCw, Search, Shuffle, X } from 'lucide-react';
+import { PanelRightClose, RefreshCw, Shuffle } from 'lucide-react';
 import { VideoItem, VideoSource } from '../types/youtube';
 import { formatRelativeDate } from '../utils/youtube';
 import { ThumbnailImage } from './ThumbnailImage';
@@ -27,17 +26,6 @@ export function QueuePanel({
   onShufflePick,
   onHideSideMenu,
 }: QueuePanelProps) {
-  const [query, setQuery] = useState('');
-
-  const filteredVideos = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return videos;
-    return videos.filter(
-      (v) =>
-        v.title.toLowerCase().includes(q) ||
-        v.author.toLowerCase().includes(q)
-    );
-  }, [videos, query]);
 
   return (
     <aside
@@ -97,29 +85,6 @@ export function QueuePanel({
             </button>
           </div>
         </div>
-
-        {/* Search Queue */}
-        <div className="relative mt-3">
-          <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter queue..."
-            aria-label="Filter queue videos"
-            className="w-full glass-input focus:border-amber-400/70 focus:outline-none rounded-xl pl-8 pr-8 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 transition-colors"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery('')}
-              aria-label="Clear queue filter"
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
       </div>
 
       {/* Queue Body */}
@@ -148,14 +113,14 @@ export function QueuePanel({
               Try Again
             </button>
           </div>
-        ) : filteredVideos.length === 0 ? (
+        ) : videos.length === 0 ? (
           <div className="p-6 text-center">
             <p className="text-sm text-zinc-400">
-              {query ? 'No videos match your filter.' : 'No videos found in this feed yet.'}
+              No videos found in this feed yet.
             </p>
           </div>
         ) : (
-          filteredVideos.map((video, idx) => {
+          videos.map((video, idx) => {
             const isActive = video.videoId === activeVideoId;
             return (
               <button
